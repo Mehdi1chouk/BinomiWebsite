@@ -21,9 +21,12 @@ module.exports = (server) => {
     //auth
     server.post('/register', authController.register)
     server.post('/login', authController.login)
+    server.post('/forgot-password', authController.forgotPassword)
+    server.post('/reset-password', authController.resetPassword)
 
     //Room
     server.get('/room', verifytoken, RoomController.getAll)
+    server.get('/Allrooms', RoomController.getAllRooms)
     server.post('/room', verifytoken, uploadroomImages, RoomController.CreateRoom)
     server.put('/room/:id', uploadroomImages, RoomController.updateRoom)
     server.delete('/room/:id', RoomController.deleteRoom)

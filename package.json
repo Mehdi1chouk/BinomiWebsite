@@ -17,6 +17,8 @@
         "jsonwebtoken": "^9.0.2",
         "mongoose": "^8.8.1",
         "nodejs_website": "file:",
-        "nodemon": "^3.1.7"
+        "nodemailer": "^6.9.16",
+        "nodemon": "^3.1.7",
+        "uuid": "^11.0.3"
     }
 }

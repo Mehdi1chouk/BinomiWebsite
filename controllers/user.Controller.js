@@ -1,13 +1,29 @@
 const UserModel = require('../models/User.model');
 
-
+let UsersList = [];
 
 const getAll = async(req, res) => {
     console.log(req.ch)
-    let list = await UserModel.find()
-    res.send(list)
+    UsersList = await UserModel.find()
+    res.send(UsersList)
+    console.log(UsersList)
 
 }
+
+/*
+   const filterRoom = async (req, res, next) => {
+       const filters = req.body;
+       const filteredRooms = RoomsList.filter(room => {
+           let isValid = true;
+           for (key in filters) {
+               console.log(key, room[key], filters[key]);
+               isValid = isValid && room[key] == filters[key];
+           }
+           return isValid;
+       });
+       res.send(filteredRooms);
+   };
+   */
 
 
 

@@ -2,12 +2,19 @@ const RoomModel = require("../models/Room.model")
 
 
 
-
 const getAll = async(req, res) => {
     let list = await RoomModel.find({ user_id: req.user._id }).populate({ path: 'user_id', select: 'firstName lastName' });
     res.send(list)
 
 }
+
+const getAllRooms = async(req, res) => {
+    console.log(req.ch)
+    const RoomsList = await RoomModel.find()
+    res.send(RoomsList)
+
+}
+
 
 
 const CreateRoom = async(req, res) => {
@@ -44,4 +51,4 @@ const deleteRoom = (req, res) => {
 
 }
 
-module.exports = { getAll, CreateRoom, updateRoom, deleteRoom }
+module.exports = { getAll, CreateRoom, updateRoom, deleteRoom, getAllRooms }

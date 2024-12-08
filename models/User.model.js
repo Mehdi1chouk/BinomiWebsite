@@ -13,7 +13,9 @@ const Schema = mongoose.Schema({
     city: String,
     profession: String,
     workplace: String,
-    photo: String
+    photo: String,
+    budget: Number,
+    resetKey: String
 
 
 })

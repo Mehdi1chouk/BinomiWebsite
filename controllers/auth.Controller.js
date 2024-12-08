@@ -2,6 +2,42 @@ const { response } = require("express");
 const UserModel = require('../models/User.model');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const uuid = require('uuid');
+const { transporter } = require('./config')
+
+
+exports.forgotPassword = async(req, res) => {
+    let { email } = req.body
+    if (email) {
+        try {
+            let user = await UserModel.findOne({ email: email })
+            if (user) {
+                user.resetKey = uuid.v7()
+                console.log(user.resetKey)
+
+                let mailContent = {
+                    from: 'NODE APP',
+                    to: user.email,
+                    subject: 'Reset Password',
+                    text: 'reset password : ' + user.resetKey
+                }
+                await transporter.sendMail(mailContent)
+                await user.save()
+                res.send({ message: 'mail sent successfully' })
+            } else {
+                res.status(404).send({ message: 'user not found !!' })
+            }
+        } catch (err) {
+            console.log(err)
+            res.status(404).send(err)
+        }
+    } else {
+        res.status(444).send({ message: 'missing information !!' })
+    }
+
+
+
+};
 exports.register = async(req, res) => {
 
     try {
@@ -46,4 +82,26 @@ exports.login = async(req, res) => {
         res.status(404).send(err)
     }
 
+};
+exports.resetPassword = async(req, res) => {
+    const { resetKey, newPassword } = req.body
+    if (resetKey && newPassword) {
+        try {
+            let user = await UserModel.findOne({ resetKey: resetKey })
+            if (user) {
+                let privateKey = await bcrypt.genSalt(10)
+                user.password = await bcrypt.hash(newPassword, privateKey)
+                await user.save()
+                res.send({ message: 'password updated ' })
+            } else {
+                res.status(404).send({ message: 'invalid credential !!' })
+            }
+        } catch (err) {
+            console.log(err)
+            res.status(404).send(err)
+        }
+    } else {
+        res.status(444).send({ message: 'missing information !!' })
+
+    }
 };
