@@ -15,9 +15,11 @@ const Schema = mongoose.Schema({
     workplace: String,
     photo: String,
     budget: Number,
-    resetKey: String
+    resetKey: String,
+    resetTimeout: Number
 
-
+}, {
+    timestamps: true
 })
 
 module.exports = mongoose.model('User', Schema)

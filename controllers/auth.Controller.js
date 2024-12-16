@@ -13,6 +13,15 @@ exports.forgotPassword = async(req, res) => {
             let user = await UserModel.findOne({ email: email })
             if (user) {
                 user.resetKey = uuid.v7()
+
+                let date = new Date()
+                date.setHours(date.getHours() + 1)
+                user.resetTimeout = date.getTime()
+
+
+
+
+
                 console.log(user.resetKey)
 
                 let mailContent = {
@@ -51,9 +60,7 @@ exports.register = async(req, res) => {
             newUser.password = hashedPassword
             await newUser.save()
             res.send(newUser)
-
         }
-
     } catch (err) {
         res.status(404).send(err)
     }
@@ -88,7 +95,16 @@ exports.resetPassword = async(req, res) => {
     if (resetKey && newPassword) {
         try {
             let user = await UserModel.findOne({ resetKey: resetKey })
-            if (user) {
+
+
+
+
+            let time = (new Date()).getTime()
+            if (user && time < user.resetTimeout) {
+
+
+
+
                 let privateKey = await bcrypt.genSalt(10)
                 user.password = await bcrypt.hash(newPassword, privateKey)
                 await user.save()

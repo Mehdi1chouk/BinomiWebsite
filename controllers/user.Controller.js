@@ -10,20 +10,38 @@ const getAll = async(req, res) => {
 
 }
 
-/*
-   const filterRoom = async (req, res, next) => {
-       const filters = req.body;
-       const filteredRooms = RoomsList.filter(room => {
-           let isValid = true;
-           for (key in filters) {
-               console.log(key, room[key], filters[key]);
-               isValid = isValid && room[key] == filters[key];
-           }
-           return isValid;
-       });
-       res.send(filteredRooms);
-   };
-   */
+
+
+
+const filterUser = async(req, res, next) => {
+    try {
+        const filters = req.body;
+
+
+        const users = await UserModel.find();
+
+
+        const filteredUsers = users.filter(user => {
+            return Object.keys(filters).every(key => {
+                // Ensure the filter comparison works correctly (case insensitive for strings)
+                if (typeof user[key] === 'string' && typeof filters[key] === 'string') {
+                    return user[key].toLowerCase() === filters[key].toLowerCase();
+                }
+                return user[key] == filters[key];
+            });
+        });
+        if (filteredUsers.length === 0) {
+            return res.status(404).send({ message: "No user found with the specified attributes." });
+        }
+
+        // Send the filtered users as the response
+        res.status(200).send(filteredUsers);
+    } catch (error) {
+        console.error("Error in filterUser:", error);
+        res.status(500).send({ error: "An error occurred while filtering users." });
+    }
+};
+
 
 
 
@@ -60,4 +78,4 @@ const deleteUser = (req, res) => {
 
 }
 
-module.exports = { getAll, CreateUser, updateUser, deleteUser }
+module.exports = { getAll, CreateUser, updateUser, deleteUser, filterUser }
