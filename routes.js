@@ -1,6 +1,8 @@
 const UserController = require('./controllers/user.Controller');
 const RoomController = require('./controllers/room.Controller')
 const authController = require('./controllers/auth.Controller')
+const notifController = require('./controllers/notification.Controller')
+const chatController = require('./controllers/chat.Controller')
 const multiparty = require('connect-multiparty')
 const uploadmiddleware = multiparty({ uploadDir: './UsersImages' })
 const uploadroomImages = multiparty({ uploadDir: './RoomImages' })
@@ -35,6 +37,11 @@ module.exports = (server) => {
     server.get('/filter', RoomController.filter)
     server.get('/search/:text', RoomController.search)
     server.get('/userRoom', RoomController.usersWithRoom)
+
+    //notifications
+    server.post('/notif', notifController.sendNotification);
+    // chat
+    server.post('/chat', chatController.sendMessage);
 
 
 }

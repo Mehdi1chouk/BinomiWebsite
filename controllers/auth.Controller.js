@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const uuid = require('uuid');
 const { transporter } = require('./config')
+const socketIO = require('../socketio');
 
 
 exports.forgotPassword = async(req, res) => {
@@ -67,6 +68,11 @@ exports.register = async(req, res) => {
 
 };
 
+let io;
+
+exports.setSocketIo = (socketIoInstance) => {
+    io = socketIoInstance;
+};
 
 exports.login = async(req, res) => {
 
@@ -78,6 +84,20 @@ exports.login = async(req, res) => {
             let success = await bcrypt.compare(req.body.password, passwordUserindb)
             if (success) {
                 let token = jwt.sign({ _id: user._id, role: 'test' }, process.env.SECRET)
+
+
+                /*if (token) {
+                    console.log('user_connected : ', `${user.firstname}  ${user.lastname} is connected`);
+                }*/
+
+                const io = socketIO.getIO(); // Get the io instance
+                console.log('Emitting event: user_connected');
+                io.emit('user_connected', `${user.firstname} is connected`);
+
+
+
+
+
                 res.send({ firstname: user.firstname, token: token })
             } else {
                 res.status(422).send({ message: 'Missing Information !!' })
