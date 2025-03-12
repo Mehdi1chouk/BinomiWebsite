@@ -8,31 +8,54 @@ const getRoombyUserId = async(req, res) => {
 
 }
 
-const getAllRooms = async(req, res) => {
-    console.log(req.ch)
-    const RoomsList = await RoomModel.find()
-    res.send(RoomsList)
-
-}
-
-
-
-const CreateRoom = async(req, res) => {
+const getAllRooms = async (req, res) => {
     try {
-        let Room = new RoomModel(req.body)
-        if (req.files && req.files.photos) {
-            Room.photos = req.files.photos
-        }
-        if (req.files && req.files.Equipement) {
-            Room.Equipement = req.files.Equipement
-        }
-        Room.user_id = req.user._id
-        await Room.save()
-        res.send(Room)
+        let RoomsList = await RoomModel.find();
+
+        // Convertir les chemins d'images en URL complètes
+        RoomsList = RoomsList.map(room => ({
+            ...room._doc,
+            photos: room.photos.map(photo => `http://localhost:3003/${photo.path.replace("\\", "/")}`),
+            Equipement: room.Equipement.map(equip => ({
+                ...equip,
+                path: `http://localhost:3003/${equip.path.replace("\\", "/")}`
+            }))
+        }));
+
+        res.send(RoomsList);
     } catch (err) {
-        res.status(422).send(err)
+        res.status(500).send({ message: 'Error retrieving rooms', error: err.message });
     }
-}
+};
+
+
+
+const CreateRoom = async (req, res) => {
+    try {
+        let Room = new RoomModel(req.body);
+
+        if (req.files && req.files.photos) {
+            Room.photos = req.files.photos.map(photo => ({
+                path: photo.path.replace("\\", "/"), // Normalisation du chemin
+                name: photo.name
+            }));
+        }
+
+        if (req.files && req.files.Equipement) {
+            Room.Equipement = req.files.Equipement.map(equip => ({
+                path: equip.path.replace("\\", "/"),
+                name: equip.name
+            }));
+        }
+
+        Room.user_id = req.user._id;
+        await Room.save();
+        res.send(Room);
+    } catch (err) {
+        res.status(422).send(err);
+    }
+};
+
 
 
 
@@ -90,4 +113,52 @@ const usersWithRoom = async(req, res) => {
 
 }
 
-module.exports = { getRoombyUserId, CreateRoom, updateRoom, deleteRoom, getAllRooms, filter, search, usersWithRoom }
+
+const getRoomById = async (req, res) => {
+    try {
+        const room = await RoomModel.findById(req.params.id)
+            .populate({ 
+                path: 'user_id', 
+                select: 'firstName lastName email phoneNumber' 
+            });
+
+        if (!room) {
+            return res.status(404).send({ message: 'Room not found' });
+        }
+
+        // Convert Equipement paths to full URLs
+        const equipementList = room.Equipement.map(equip => ({
+            ...equip.toObject(),
+            path: `http://localhost:3003/${equip.path.replace("\\", "/")}`
+        }));
+
+        // Convert photos paths to full URLs
+        const photoList = room.photos.map(photo => 
+            `http://localhost:3003/${photo.path.replace("\\", "/")}`
+        );
+
+        res.status(200).json({
+            success: true,
+            data: {
+                ...room.toObject(),
+                Equipement: equipementList,
+                photos: photoList
+            }
+        });
+
+    } catch (err) {
+        if (err.name === 'CastError') {
+            return res.status(400).send({ message: 'Invalid room ID format' });
+        }
+        res.status(500).send({
+            message: 'Server error',
+            error: err.message
+        });
+    }
+};
+
+
+
+
+
+module.exports = { getRoombyUserId, CreateRoom, updateRoom, deleteRoom, getAllRooms, filter, search, usersWithRoom,getRoomById }

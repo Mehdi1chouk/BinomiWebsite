@@ -25,6 +25,11 @@ const Schema = mongoose.Schema({
         name: String
     }],
     description: String,
+    gaz:Boolean,
+    electricite : Boolean,
+    chambres : Number,
+    lits : Number,
+    sdb : Number,
     user_id: { type: mongoose.Types.ObjectId, ref: UserModel }
 })
 

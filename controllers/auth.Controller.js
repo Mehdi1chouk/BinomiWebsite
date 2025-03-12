@@ -48,25 +48,52 @@ exports.forgotPassword = async(req, res) => {
 
 
 };
-exports.register = async(req, res) => {
-
+exports.register = async (req, res) => {
     try {
-        let user = await UserModel.findOne({ email: req.body.email })
-
-        if (user) { response.status(422).send({ message: 'user exists !!' }) } else {
-            // generate private key de puissance  entre 10 et 20
-            let privatekey = await bcrypt.genSalt(12)
-            let hashedPassword = await bcrypt.hash(req.body.password, privatekey)
-            let newUser = new UserModel(req.body)
-            newUser.password = hashedPassword
-            await newUser.save()
-            res.send(newUser)
+        const existingUser = await UserModel.findOne({ email: req.body.email });
+        if (existingUser) {
+            return res.status(422).send({ message: 'User already exists!' });
         }
-    } catch (err) {
-        res.status(404).send(err)
-    }
 
+        const privatekey = await bcrypt.genSalt(12);
+        const hashedPassword = await bcrypt.hash(req.body.password, privatekey);
+
+        // Create user with all form data
+        const newUser = new UserModel({
+            ...req.body,
+            password: hashedPassword,
+            photo: req.files?.photo ? req.files.photo.path : null
+        });
+
+        await newUser.save();
+        res.send(newUser);
+    } catch (err) {
+        res.status(500).send({ 
+            message: 'Registration failed',
+            error: err.message 
+        });
+    }
 };
+
+
+
+// try {
+//     let user = await UserModel.findOne({ email: req.body.email })
+
+//     if (user) { response.status(422).send({ message: 'user exists !!' }) } else {
+//         // generate private key de puissance  entre 10 et 20
+//         let privatekey = await bcrypt.genSalt(12)
+//         let hashedPassword = await bcrypt.hash(req.body.password, privatekey)
+//         let newUser = new UserModel(req.body)
+//         newUser.password = hashedPassword
+//         await newUser.save()
+//         res.send(newUser)
+//     }
+// } catch (err) {
+//     res.status(404).send(err)
+// }
+
+
 
 let io;
 

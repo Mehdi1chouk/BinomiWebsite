@@ -15,7 +15,7 @@ exports.sendMessage = async(req, res) => {
             return res.status(404).json({ message: 'Sender or Receiver not found' });
         }
 
-        // Save notification to the database
+        // Save chat message to the database
         const chat = new ChatModel({
             sender: senderId,
             receiver: receiverId,
@@ -25,11 +25,10 @@ exports.sendMessage = async(req, res) => {
         await chat.save();
         console.log('chat message saved in database:', chat);
 
-        // Debug to confirm receiver ID and socket logic
         const io = getIO();
         console.log(`Emitting chat message to receiver room: ${receiverId}`);
 
-        // Emit notification to the specific room
+
         io.emit('receive_chatMessage', {
             sender: sender.firstname,
             message,

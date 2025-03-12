@@ -8,8 +8,7 @@ socket.on('connect', () => {
     console.log('Client connected to the server');
 
     // Register the user ID as a room
-    socket.emit('register_user', receiverUserId);
-    console.log(`Registered user ID: ${receiverUserId}`);
+    //socket.emit('register_user', receiverUserId);
 });
 
 socket.on('user_connected', (data) => {

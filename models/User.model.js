@@ -4,7 +4,7 @@ const Schema = mongoose.Schema({
 
     firstname: String,
     lastname: String,
-    dateOfBirth: Date,
+    age: Number,
     email: { type: String, required: true },
     password: String,
     gender: { type: String, required: true },
@@ -16,8 +16,9 @@ const Schema = mongoose.Schema({
     photo: String,
     budget: Number,
     resetKey: String,
-    resetTimeout: Number
-
+    resetTimeout: Number,
+    
+ 
 }, {
     timestamps: true
 })

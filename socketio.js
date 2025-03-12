@@ -13,7 +13,7 @@ module.exports = {
             // Get user ID and join room for targeted notifications
             client.on('register_user', (userId) => {
                 client.join(userId); // Join a room with the user ID
-                console.log(`User with ID ${userId} joined their room.`);
+
             });
 
 

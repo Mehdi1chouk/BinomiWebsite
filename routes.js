@@ -8,21 +8,20 @@ const uploadmiddleware = multiparty({ uploadDir: './UsersImages' })
 const uploadroomImages = multiparty({ uploadDir: './RoomImages' })
 const { verifytoken } = require('./middlewares/AuthMiddleWare')
 
-
-
 module.exports = (server) => {
-
 
 
     //users
     server.get('/users', UserController.getAll) // a changer all users should be shown only when authenticated(token)
     server.post('/users', uploadmiddleware, UserController.CreateUser)
-    server.put('/users/:id', UserController.updateUser)
+    /*rod belk*/server.put('/users/:id', UserController.updateUser)  //tansech tzid middleware upload files
     server.delete('/users/:id', UserController.deleteUser)
     server.post('/users/filter', UserController.filterUser);
+    server.get('/users/:id', UserController.getUserById);
+
 
     //auth
-    server.post('/register', authController.register)
+    server.post('/register', uploadmiddleware,authController.register)
     server.post('/login', authController.login)
     server.post('/forgot-password', authController.forgotPassword)
     server.post('/reset-password', authController.resetPassword)
@@ -33,6 +32,8 @@ module.exports = (server) => {
     server.post('/room', verifytoken, uploadroomImages, RoomController.CreateRoom)
     server.put('/room/:id', uploadroomImages, RoomController.updateRoom)
     server.delete('/room/:id', RoomController.deleteRoom)
+    server.get('/room/:id', RoomController.getRoomById);
+
 
     server.get('/filter', RoomController.filter)
     server.get('/search/:text', RoomController.search)
