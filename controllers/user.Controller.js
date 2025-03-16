@@ -14,15 +14,6 @@ const getAll = async (req, res) => {
     res.send(UsersList);
 };
 
-// const getAll = async(req, res) => {
-//     console.log(req.ch)
-//     UsersList = await UserModel.find()
-//     res.send(UsersList)
-//     //console.log(UsersList)
-
-// }
-
-
 
 
 const filterUser = async (req, res) => {
@@ -67,9 +58,6 @@ const filterUser = async (req, res) => {
 };
 
 
-
-
-
 const CreateUser = async(req, res) => {
 
     try {
@@ -89,11 +77,52 @@ const CreateUser = async(req, res) => {
 }
 
 
-const updateUser = (req, res) => {
-    UserModel.updateOne({ _id: req.params.id }, req.body)
-        .then((result) => { res.send(result) })
-        .catch((err) => { res.status(422).send(err) })
-}
+const fs = require('fs');
+const path = require('path');
+
+
+const updateUser = async (req, res) => {
+    try {
+        // Find the user first
+        const user = await UserModel.findById(req.params.id);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        // Handle the image upload
+        let updatedData = { ...req.body };
+
+        if (req.files?.photo) {
+            // Remove the old profile image if it exists
+            if (user.photo) {
+                const oldImagePath = path.join(__dirname, '../', user.photo);
+                if (fs.existsSync(oldImagePath)) {
+                    fs.unlinkSync(oldImagePath);
+                }
+            }
+
+            // Save new image path
+            updatedData.photo = req.files.photo.path;
+        }
+
+        // Update user with new data
+        const result = await UserModel.findByIdAndUpdate(
+            req.params.id,
+            updatedData,
+            { new: true, runValidators: true }
+        ).select('-password');
+
+        res.status(200).json({ success: true, data: result });
+
+    } catch (err) {
+        res.status(422).json({
+            success: false,
+            message: 'Error updating user',
+            error: err.message
+        });
+    }
+};
+
 
 
 const deleteUser = (req, res) => {

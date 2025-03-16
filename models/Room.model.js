@@ -26,7 +26,7 @@ const Schema = mongoose.Schema({
     }],
     description: String,
     gaz:Boolean,
-    electricite : Boolean,
+    electricite :Boolean,
     chambres : Number,
     lits : Number,
     sdb : Number,

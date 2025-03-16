@@ -14,7 +14,7 @@ module.exports = (server) => {
     //users
     server.get('/users', UserController.getAll) // a changer all users should be shown only when authenticated(token)
     server.post('/users', uploadmiddleware, UserController.CreateUser)
-    /*rod belk*/server.put('/users/:id', UserController.updateUser)  //tansech tzid middleware upload files
+    server.put('/users/:id',verifytoken,uploadmiddleware,UserController.updateUser)
     server.delete('/users/:id', UserController.deleteUser)
     server.post('/users/filter', UserController.filterUser);
     server.get('/users/:id', UserController.getUserById);
@@ -30,7 +30,7 @@ module.exports = (server) => {
     server.get('/room', verifytoken, RoomController.getRoombyUserId)
     server.get('/Allrooms', RoomController.getAllRooms)
     server.post('/room', verifytoken, uploadroomImages, RoomController.CreateRoom)
-    server.put('/room/:id', uploadroomImages, RoomController.updateRoom)
+    server.put('/room/:id',  verifytoken,uploadroomImages, RoomController.updateRoom)
     server.delete('/room/:id', RoomController.deleteRoom)
     server.get('/room/:id', RoomController.getRoomById);
 
