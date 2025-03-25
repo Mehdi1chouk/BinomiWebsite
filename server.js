@@ -10,10 +10,7 @@ const socketIO = require('./socketio'); // Import the Socket.IO configuration
 app.use(express.json());
 dotenv.config();
 app.use(cors())
-
 // Express setup
-
-
 require('./routes')(app);
 
 app.use('/UsersImages', express.static('UsersImages'));
@@ -23,10 +20,6 @@ const server = http.createServer(app);
 
 // Socket.IO initialization
 const io = socketIO.init(server);
-
-
-
-
 
 
 mongoose.connect(process.env.DB).

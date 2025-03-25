@@ -8,7 +8,7 @@ exports.verifytoken = (req, res, next) => {
     if (req.headers['authorization']) {
         token = token.replace(/^Bearer\s+/, "");
     }
-    console.log(token);
+    //console.log(token);
     try {
         let decoded = jwt.verify(token, process.env.SECRET)
         req.user = decoded;

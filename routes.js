@@ -12,7 +12,7 @@ module.exports = (server) => {
 
 
     //users
-    server.get('/users', UserController.getAll) // a changer all users should be shown only when authenticated(token)
+    server.get('/users', verifytoken,UserController.getAll) // a changer all users should be shown only when authenticated(token)
     server.post('/users', uploadmiddleware, UserController.CreateUser)
     server.put('/users/:id',verifytoken,uploadmiddleware,UserController.updateUser)
     server.delete('/users/:id', UserController.deleteUser)
@@ -40,9 +40,20 @@ module.exports = (server) => {
     server.get('/userRoom', RoomController.usersWithRoom)
 
     //notifications
-    server.post('/notif', notifController.sendNotification);
+    // For sending a notification
+    server.post('/notif', verifytoken, notifController.sendNotification);
+
+    // For fetching notifications for the current user
+    server.get('/notifications', verifytoken, notifController.getNotifications);
+
+    // For handling notification actions (accept/reject)
+    server.post('/notifications/:notificationId/accept', verifytoken, notifController.acceptNotification);
+    server.post('/notifications/:notificationId/refuse', verifytoken, notifController.refuseNotification);
     // chat
-    server.post('/chat', chatController.sendMessage);
+    //server.post('/chat',verifytoken,chatController.sendMessage);
+    server.get('/conversations', verifytoken, chatController.getConversations);
+    server.get('/conversations/:conversationId/messages', verifytoken, chatController.getMessages);
+    server.post('/conversations/:conversationId/messages', verifytoken, chatController.sendMessage);
 
 
 }

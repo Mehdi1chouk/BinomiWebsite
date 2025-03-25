@@ -105,6 +105,14 @@ const updateRoom = async (req, res) => {
         // Start with updating text fields
         const updateData = { ...req.body };
 
+        
+        // Handle the etage field specifically
+        if (updateData.etage === "null" || updateData.etage === "") {
+            updateData.etage = 0; // Convert to number 0 instead of string "null"
+        } else if (updateData.etage !== undefined) {
+            updateData.etage = Number(updateData.etage); // Ensure it's a number
+        }
+
         // ✅ Ensure `user_id` is correctly formatted
         if (req.body.user_id && typeof req.body.user_id === "object") {
             updateData.user_id = req.body.user_id._id; // Extract only the _id

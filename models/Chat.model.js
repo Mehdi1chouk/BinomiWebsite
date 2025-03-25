@@ -9,4 +9,46 @@ const Schema = new mongoose.Schema({
     isRead: { type: Boolean, default: false } // chat status (read/unread)
 });
 
-module.exports = mongoose.model('Chat', Schema);
+module.exports = mongoose.model('chat', Schema);
+
+
+// const mongoose = require('mongoose');
+// const UserModel = require('./User.model');
+
+// const ConversationSchema = new mongoose.Schema({
+//   user1: { 
+//     type: mongoose.Schema.Types.ObjectId, 
+//     ref: UserModel, 
+//     required: true 
+//   },
+//   user2: { 
+//     type: mongoose.Schema.Types.ObjectId, 
+//     ref: UserModel, 
+//     required: true 
+//   },
+//   messages: [{
+//     sender: { 
+//       type: mongoose.Schema.Types.ObjectId, 
+//       ref: UserModel, 
+//       required: true 
+//     },
+//     content: { 
+//       type: String, 
+//       required: true 
+//     },
+//     timestamp: { 
+//       type: Date, 
+//       default: Date.now 
+//     },
+//     read: { 
+//       type: Boolean, 
+//       default: false 
+//     }
+//   }],
+//   lastActivity: {
+//     type: Date,
+//     default: Date.now
+//   }
+// });
+
+// module.exports = mongoose.model('Chat', ConversationSchema);
