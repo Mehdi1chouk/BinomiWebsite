@@ -25,12 +25,6 @@ const sendNotification = async(req, res) => {
 
         await notification.save();
         console.log('Notification saved in database:', notification);
-
-
-
-
-
-
          const populatedNotification = await NotificationModel.findById(notification._id)
             .populate('sender', 'firstname lastname photo');
         
@@ -79,8 +73,6 @@ const getNotifications = async(req, res) => {
     }
 };
 
-
-// Add these functions to your notification controller
 
 // Handle accepting a notification
 const acceptNotification = async (req, res) => {
@@ -176,4 +168,35 @@ const acceptNotification = async (req, res) => {
     }
   };
 
-module.exports = { sendNotification,getNotifications,acceptNotification,refuseNotification }
+
+  // Delete a notification
+const deleteNotification = async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+    const userId = req.user._id; // From your verifyToken middleware
+
+    // Find the notification and verify it belongs to the current user
+    const notification = await NotificationModel.findOne({
+      _id: notificationId,
+      receiver: userId
+    });
+
+    if (!notification) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
+
+    // Delete the notification
+    await NotificationModel.findByIdAndDelete(notificationId);
+
+    res.status(200).json({ message: 'Notification deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting notification:', error);
+    res.status(500).json({
+      message: 'Error deleting notification',
+      error: error.message
+    });
+  }
+};
+
+
+module.exports = { sendNotification,getNotifications,acceptNotification,refuseNotification,deleteNotification }

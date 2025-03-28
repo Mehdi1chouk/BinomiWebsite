@@ -116,6 +116,7 @@ exports.getConversations = async (req, res) => {
             },
             lastMessage: 1,
             messages: 1
+           
           }
         }
       ]);

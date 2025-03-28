@@ -16,7 +16,7 @@ module.exports = (server) => {
     server.post('/users', uploadmiddleware, UserController.CreateUser)
     server.put('/users/:id',verifytoken,uploadmiddleware,UserController.updateUser)
     server.delete('/users/:id', UserController.deleteUser)
-    server.post('/users/filter', UserController.filterUser);
+    server.post('/users/filter', verifytoken,UserController.filterUser);
     server.get('/users/:id', UserController.getUserById);
 
 
@@ -42,13 +42,12 @@ module.exports = (server) => {
     //notifications
     // For sending a notification
     server.post('/notif', verifytoken, notifController.sendNotification);
-
-    // For fetching notifications for the current user
     server.get('/notifications', verifytoken, notifController.getNotifications);
-
-    // For handling notification actions (accept/reject)
     server.post('/notifications/:notificationId/accept', verifytoken, notifController.acceptNotification);
     server.post('/notifications/:notificationId/refuse', verifytoken, notifController.refuseNotification);
+    server.delete('/notifications/:notificationId', verifytoken,notifController.deleteNotification);
+
+
     // chat
     //server.post('/chat',verifytoken,chatController.sendMessage);
     server.get('/conversations', verifytoken, chatController.getConversations);
