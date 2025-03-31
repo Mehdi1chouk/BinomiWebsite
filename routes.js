@@ -12,7 +12,7 @@ module.exports = (server) => {
 
 
     //users
-    server.get('/users', verifytoken,UserController.getAll) // a changer all users should be shown only when authenticated(token)
+    server.get('/users', verifytoken,UserController.getAll) 
     server.post('/users', uploadmiddleware, UserController.CreateUser)
     server.put('/users/:id',verifytoken,uploadmiddleware,UserController.updateUser)
     server.delete('/users/:id', UserController.deleteUser)
@@ -25,6 +25,8 @@ module.exports = (server) => {
     server.post('/login', authController.login)
     server.post('/forgot-password', authController.forgotPassword)
     server.post('/reset-password', authController.resetPassword)
+    server.put('/update-password/:userId', verifytoken,authController.updatePassword);
+
 
     //Room
     server.get('/room', verifytoken, RoomController.getRoombyUserId)
