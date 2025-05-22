@@ -319,7 +319,7 @@ const getRoomById = async (req, res) => {
         const room = await RoomModel.findById(req.params.id)
             .populate({ 
                 path: 'user_id', 
-                select: 'firstName lastName email phoneNumber' 
+                select: 'firstname lastname email phoneNumber' 
             });
 
         if (!room) {
