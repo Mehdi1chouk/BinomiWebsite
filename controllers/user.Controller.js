@@ -113,10 +113,19 @@ const getUserById = async (req, res) => {
 
         // Find Room by User ID
         const room = await RoomModel.findOne({ user_id: req.params.id })
-                                    .select('type etat region price') // Select the fields you need
+                                    .select('type etat region price user_id') // Select the fields you need
                                     .lean();
 
+
+
+
+        const archivedRooms = await RoomModel.find({ user_id: null, lastOwner: req.params.id })  //new
+        .select('type region price') // You can add other fields if needed                        //new
+        .lean();                                                                                 //new
+
+
         user.room = room || null; // Add the room data to the user object
+         user.archivedRooms = archivedRooms;                                                   //new
 
         res.status(200).json({
             success: true,

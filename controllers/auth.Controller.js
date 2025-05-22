@@ -17,32 +17,45 @@ exports.setSocketIo = (socketIoInstance) => {
 
 
 
-exports.login = async(req, res) => {
+exports.login = async (req, res) => {
   try {
-      let user = await UserModel.findOne({ email: req.body.email })
-      
-      if (!user) { response.status(422).send({ message: 'user don t exists !!' }) } else {
-          let passwordUserindb = await user.password
-          let success = await bcrypt.compare(req.body.password, passwordUserindb)
-          if (success) {
-              let token = jwt.sign({ _id: user._id, role: 'test' }, process.env.SECRET)
-              const io = socketIO.getIO(); // Get the io instance
-              console.log('Emitting event: user_connected');
-              io.emit('user_connected', `${user.firstname} is connected`);
-              res.send({ 
-                  firstname: user.firstname, 
-                  token: token,
-                  gender: user.gender // Add gender to the response
-              })
-          } else {
-              res.status(422).send({ message: 'Missing Information !!' })
-          }
-      }
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(422).send({ message: 'Email et mot de passe requis.' });
+    }
+
+    const user = await UserModel.findOne({ email });
+
+    if (!user) {
+      return res.status(422).send({ message: "L'utilisateur n'existe pas." });
+    }
+
+    const passwordUserInDb = user.password;
+
+    const isMatch = await bcrypt.compare(password, passwordUserInDb);
+    if (!isMatch) {
+      return res.status(422).send({ message: 'Mot de passe incorrect.' });
+    }
+
+    const token = jwt.sign({ _id: user._id, role: 'test' }, process.env.SECRET);
+
+    // Emit socket event
+    const io = socketIO.getIO();
+    io.emit('user_connected', `${user.firstname} is connected`);
+
+    return res.send({
+      firstname: user.firstname,
+      token,
+      gender: user.gender
+    });
+
   } catch (err) {
-      console.log(err)
-      res.status(404).send(err)
+    console.error('Login error:', err);
+    res.status(500).send({ message: 'Erreur interne du serveur.' });
   }
 };
+
 
 
 

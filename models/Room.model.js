@@ -30,7 +30,15 @@ const Schema = mongoose.Schema({
     chambres : Number,
     lits : Number,
     sdb : Number,
-    user_id: { type: mongoose.Types.ObjectId, ref: UserModel }
+    user_id: { type: mongoose.Types.ObjectId, ref: UserModel },
+    currentOccupants: {
+        type: Number,
+        default: 0
+    },
+    lastOwner: {
+    type: mongoose.Schema.Types.ObjectId,ref: UserModel
+  },
+
 })
 
 module.exports = mongoose.model('Room', Schema)

@@ -35,6 +35,12 @@ module.exports = (server) => {
     server.put('/room/:id',  verifytoken,uploadroomImages, RoomController.updateRoom)
     server.delete('/room/:id', RoomController.deleteRoom)
     server.get('/room/:id', RoomController.getRoomById);
+    server.patch('/room/:id/incrementOccupants', RoomController.incrementOccupants);
+    server.patch('/room/:id/decrementOccupants', RoomController.decrementOccupants);
+    server.put("/room/archive/:id",verifytoken,RoomController.archiveRoom);
+
+
+
 
 
     server.get('/filter', RoomController.filter)

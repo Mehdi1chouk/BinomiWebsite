@@ -35,7 +35,9 @@ const CreateRoom = async (req, res) => {
         // Create the room with the basic form data
         let Room = new RoomModel({
             ...req.body,
-            user_id: req.user._id
+            user_id: req.user._id,
+            lastOwner: req.user._id
+
         });
 
         // Handle photos
@@ -80,14 +82,50 @@ if (req.files && req.files.photos) {
     }
 };
 
+const incrementOccupants = async (req, res) => {
+    const roomId = req.params.id;
+
+    try {
+        const updatedRoom = await RoomModel.findByIdAndUpdate(
+            roomId,
+            { $inc: { currentOccupants: 1 } },
+            { new: true } // Return the updated document
+        );
+
+        if (!updatedRoom) {
+            return res.status(404).json({ message: 'Room not found' });
+        }
+
+        res.status(200).json(updatedRoom);
+    } catch (err) {
+        console.error('Error incrementing occupants:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+const decrementOccupants = async (req, res) => {
+    try {
+        const roomId = req.params.id;
+        const room = await RoomModel.findById(roomId);
+
+        if (!room) {
+            return res.status(404).json({ message: 'Room not found' });
+        }
+
+        if (room.currentOccupants > 0) {
+            room.currentOccupants -= 1;
+            await room.save();
+        }
+
+        res.status(200).json(room);
+    } catch (error) {
+        console.error('Error decrementing occupants:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
 
 
 
-// const updateRoom = (req, res) => {
-//     RoomModel.updateOne({ _id: req.params.id }, req.body)
-//         .then((result) => { res.send(result) })
-//         .catch((err) => { res.status(422).send(err) })
-// }
 const updateRoom = async (req, res) => {
     try {
         // Get the current room to compare what changed
@@ -206,6 +244,37 @@ const deleteRoom = (req, res) => {
 
 }
 
+// Remove the user_id from the room to archive it
+const archiveRoom = async (req, res) => {
+  try {
+    const roomId = req.params.id;
+
+    // Just for debugging
+    console.log('req.user:', req.user);
+
+    const userId = req.user?._id;
+
+    const result = await RoomModel.findByIdAndUpdate(
+      roomId,
+      {
+        $unset: { user_id: "" },
+        $set: { lastOwner: userId || null }
+      },
+      { new: true }
+    );
+
+    if (!result) return res.status(404).send({ message: "Room not found" });
+
+    res.send({ message: "Room archived", room: result });
+  } catch (error) {
+    console.error('Archive error:', error);
+    res.status(500).send({ error: "Failed to archive room" });
+  }
+};
+
+
+
+
 
 
 const filter = async(req, res) => {
@@ -245,49 +314,6 @@ const usersWithRoom = async(req, res) => {
 
 }
 
-
-// const getRoomById = async (req, res) => {
-//     try {
-//         const room = await RoomModel.findById(req.params.id)
-//             .populate({ 
-//                 path: 'user_id', 
-//                 select: 'firstName lastName email phoneNumber' 
-//             });
-
-//         if (!room) {
-//             return res.status(404).send({ message: 'Room not found' });
-//         }
-
-//         // Convert Equipement paths to full URLs
-//         const equipementList = room.Equipement.map(equip => ({
-//             ...equip.toObject(),
-//             path: `http://localhost:3003/${equip.path.replace("\\", "/")}`
-//         }));
-
-//         // Convert photos paths to full URLs
-//         const photoList = room.photos.map(photo => 
-//             `http://localhost:3003/${photo.path.replace("\\", "/")}`
-//         );
-
-//         res.status(200).json({
-//             success: true,
-//             data: {
-//                 ...room.toObject(),
-//                 Equipement: equipementList,
-//                 photos: photoList
-//             }
-//         });
-
-//     } catch (err) {
-//         if (err.name === 'CastError') {
-//             return res.status(400).send({ message: 'Invalid room ID format' });
-//         }
-//         res.status(500).send({
-//             message: 'Server error',
-//             error: err.message
-//         });
-//     }
-// };
 const getRoomById = async (req, res) => {
     try {
         const room = await RoomModel.findById(req.params.id)
@@ -335,4 +361,5 @@ const getRoomById = async (req, res) => {
 
 
 
-module.exports = { getRoombyUserId, CreateRoom, updateRoom, deleteRoom, getAllRooms, filter, search, usersWithRoom,getRoomById }
+module.exports = { getRoombyUserId, CreateRoom, updateRoom, deleteRoom, getAllRooms, filter, search,
+    usersWithRoom,getRoomById,incrementOccupants,decrementOccupants,archiveRoom }

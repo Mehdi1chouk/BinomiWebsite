@@ -3,7 +3,7 @@ exports.verifytoken = (req, res, next) => {
     let token = req.headers['authorization'] || req.headers['access'] || req.body.token;
 
     if (!token) {
-        res.status(403).send({ message: 'token required' });
+       return res.status(403).send({ message: 'token required' });
     }
     if (req.headers['authorization']) {
         token = token.replace(/^Bearer\s+/, "");
