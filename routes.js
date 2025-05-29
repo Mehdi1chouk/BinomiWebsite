@@ -61,6 +61,10 @@ module.exports = (server) => {
     server.get('/conversations', verifytoken, chatController.getConversations);
     server.get('/conversations/:conversationId/messages', verifytoken, chatController.getMessages);
     server.post('/conversations/:conversationId/messages', verifytoken, chatController.sendMessage);
+    server.get('/messages/unread/count', verifytoken, chatController.getUnreadMessagesCount);
+    server.patch('/conversations/:conversationId/read', verifytoken, chatController.markMessagesAsRead);
+
+
 
 
 }

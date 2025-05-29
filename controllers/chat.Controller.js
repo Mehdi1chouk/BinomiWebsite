@@ -118,7 +118,21 @@ exports.getConversations = async (req, res) => {
             messages: 1
            
           }
+        },
+        {
+  $addFields: {
+    unreadCount: {
+      $size: {
+        $filter: {
+          input: "$messages",
+          as: "msg",
+          cond: { $eq: ["$$msg.sender", "other"] } // messages from others
         }
+      }
+    }
+  }
+}
+
       ]);
       
       res.status(200).json(conversations);
@@ -170,3 +184,50 @@ exports.getConversations = async (req, res) => {
       });
     }
   };
+
+
+  // In chatController.js
+// In chatController.js
+exports.getUnreadMessagesCount = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const unreadCount = await ChatModel.countDocuments({
+      receiver: userId,
+      isRead: false
+    });
+
+    res.status(200).json({ count: unreadCount });
+  } catch (error) {
+    res.status(500).json({ message: "Error counting unread messages" });
+  }
+};
+
+
+exports.markMessagesAsRead = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { conversationId } = req.params;
+
+    if (!mongoose.isValidObjectId(conversationId)) {
+      return res.status(400).json({ message: 'Invalid conversation ID' });
+    }
+
+    // Mark as read all messages sent to this user in that conversation
+    await ChatModel.updateMany(
+      {
+        sender: conversationId,
+        receiver: userId,
+        isRead: false
+      },
+      { $set: { isRead: true } }
+    );
+
+    res.status(200).json({ message: 'Messages marked as read' });
+  } catch (error) {
+    console.error('Error marking messages as read:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+
