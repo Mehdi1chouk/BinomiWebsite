@@ -5,8 +5,10 @@ const jwt = require('jsonwebtoken');
 const uuid = require('uuid');
 const { transporter } = require('./config')
 const socketIO = require('../socketio');
-
-
+const axios = require('axios');
+const FormData = require('form-data');
+const fs = require('fs');
+const path = require('path');
 let io;
 
 exports.setSocketIo = (socketIoInstance) => {
@@ -69,6 +71,26 @@ exports.register = async (req, res) => {
       if (existingUser) {
         return res.status(422).send({ message: 'User already exists!' });
       }
+
+
+        const photoPath = req.files?.photo?.path;
+
+    // ✅ Validate image via YOLOv5 Flask API
+        if (photoPath) {
+          const form = new FormData();
+          form.append('image', fs.createReadStream(photoPath));
+
+          const response = await axios.post('http://127.0.0.1:5000/detect-person', form, {
+            headers: form.getHeaders(),
+          });
+
+          const { person_detected } = response.data;
+          if (!person_detected) {
+            // Delete the uploaded file (optional cleanup)
+            fs.unlinkSync(photoPath);
+            return res.status(400).send({ message: 'Profile photo must contain a person!' });
+          }
+        }
   
       const privatekey = await bcrypt.genSalt(12);
       const hashedPassword = await bcrypt.hash(req.body.password, privatekey);
@@ -77,7 +99,7 @@ exports.register = async (req, res) => {
       const newUser = new UserModel({
         ...req.body,
         password: hashedPassword,
-        photo: req.files?.photo ? req.files.photo.path : null
+        photo: photoPath || null      //req.files?.photo ? req.files.photo.path : null
       });
   
       await newUser.save();
