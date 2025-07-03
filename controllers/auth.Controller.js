@@ -10,12 +10,10 @@ const FormData = require('form-data');
 const fs = require('fs');
 const path = require('path');
 let io;
-
+const BannedEmailModel = require('../models/BannedEmail.model')
 exports.setSocketIo = (socketIoInstance) => {
     io = socketIoInstance;
 };
-
-
 
 
 
@@ -25,6 +23,16 @@ exports.login = async (req, res) => {
 
     if (!email || !password) {
       return res.status(422).send({ message: 'Email et mot de passe requis.' });
+    }
+
+    //jdid
+      // Check if email is banned
+    const bannedEmail = await BannedEmailModel.findOne({ email });
+    if (bannedEmail) {
+      return res.status(403).send({ 
+        message: 'Votre compte a été suspendu en raison de multiples signalements.',
+        banned: true 
+      });
     }
 
     const user = await UserModel.findOne({ email });
@@ -62,16 +70,22 @@ exports.login = async (req, res) => {
 
 
 
-
-
-
 exports.register = async (req, res) => {
     try {
+
+           // Check if email is banned first
+      const bannedEmail = await BannedEmailModel.findOne({ email: req.body.email });
+      if (bannedEmail) {
+        return res.status(403).send({ 
+          message: 'Cette adresse email est interdite d\'inscription.',
+          banned: true 
+        });
+      }
+
       const existingUser = await UserModel.findOne({ email: req.body.email });
       if (existingUser) {
         return res.status(422).send({ message: 'User already exists!' });
       }
-
 
         const photoPath = req.files?.photo?.path;
 
@@ -80,17 +94,20 @@ exports.register = async (req, res) => {
           const form = new FormData();
           form.append('image', fs.createReadStream(photoPath));
 
-          const response = await axios.post('http://127.0.0.1:5000/detect-person', form, {
+          const response = await axios.post('http://127.0.0.1:5000/predict', form, {
             headers: form.getHeaders(),
           });
 
-          const { person_detected } = response.data;
-          if (!person_detected) {
-            // Delete the uploaded file (optional cleanup)
-            fs.unlinkSync(photoPath);
-            return res.status(400).send({ message: 'Profile photo must contain a person!' });
-          }
-        }
+         const { prediction, probabilities } = response.data;
+
+      if (prediction !== 'a real human') {
+        // Optional: Delete the uploaded file (cleanup)
+        fs.unlinkSync(photoPath);
+        return res.status(400).send({
+          message: `Profile photo not accepted  ! try another one`
+        });
+      }
+    }
   
       const privatekey = await bcrypt.genSalt(12);
       const hashedPassword = await bcrypt.hash(req.body.password, privatekey);
@@ -216,13 +233,16 @@ exports.updatePassword = async (req, res) => {
                 let date = new Date()
                 date.setHours(date.getHours() + 1)
                 user.resetTimeout = date.getTime()
-                console.log(user.resetKey)
+                //console.log(user.resetKey)
 
                 let mailContent = {
                     from: 'NODE APP',
                     to: user.email,
                     subject: 'Reset Password',
-                    text: 'reset password : ' + user.resetKey
+                    text: `You requested a password reset.\nClick the link below to reset your password:\nhttp://localhost:5173/auth/resetpassword?resetKey=${user.resetKey}\n\nIf you did not request this, please ignore this email.`
+
+                    //text: 'reset password : ' + user.resetKey
+
                 }
                 await transporter.sendMail(mailContent)
                 await user.save()

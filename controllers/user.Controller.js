@@ -1,5 +1,7 @@
 const UserModel = require('../models/User.model');
 const RoomModel = require('../models/Room.model')
+const { encodeRoomId } = require("../utils/hashids");
+
 let UsersList = [];
 const fs = require('fs');
 const path = require('path');
@@ -237,6 +239,65 @@ const getUserById = async (req, res) => {
 //     }
 //   };
   
+
+
+
+// const getUserById = async (req, res) => {
+//     try {
+//         const user = await UserModel.findById(req.params.id)
+//             .select('-password')
+//             .lean();
+
+//         if (!user) {
+//             return res.status(404).send({ message: 'User not found' });
+//         }
+
+//         // Format photo URL
+//         if (user.photo) {
+//             user.photo = `http://localhost:3003/${user.photo.replace(/\\/g, "/")}`;
+//         }
+
+//         // Find Room by User ID
+//         const room = await RoomModel.findOne({ user_id: req.params.id })
+//             .select('type etat region price user_id')
+//             .lean();
+
+//         // Encode room ID
+//         let encodedRoomId = null;
+//         if (room && room._id) {
+//             encodedRoomId = encodeRoomId(room._id);
+//         }
+
+//         // Archived rooms
+//         const archivedRooms = await RoomModel.find({ user_id: null, lastOwner: req.params.id })
+//             .select('type region price')
+//             .lean();
+
+//         user.roomId = encodedRoomId; // << send this to frontend
+//         user.room = room || null;
+//         user.archivedRooms = archivedRooms;
+
+//         res.status(200).json({
+//             success: true,
+//             data: user
+//         });
+//     } catch (err) {
+//         if (err.name === 'CastError') {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: 'Invalid user ID format'
+//             });
+//         }
+//         res.status(500).json({
+//             success: false,
+//             message: 'Server error',
+//             error: err.message
+//         });
+//     }
+// };
+
+
+
 const filterUser = async (req, res) => {
   try {
     const {
