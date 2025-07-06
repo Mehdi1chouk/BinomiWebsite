@@ -94,34 +94,166 @@ const getAllRooms = async (req, res) => {
 
 
 
+// const CreateRoom = async (req, res) => {
+//     try {
+//         // Create the room with the basic form data
+//         let Room = new RoomModel({
+//             ...req.body,
+//             user_id: req.user._id,
+//             lastOwner: req.user._id
+
+//         });
+
+       
+//         // Handle photos
+// if (req.files && req.files.photos) {
+//     // Check if photos is an array or a single file
+//     if (Array.isArray(req.files.photos)) {
+//         Room.photos = req.files.photos.map(photo => ({
+//             path: photo.path.replace("\\", "/"), // Normalize the path
+//             name: photo.filename || photo.originalname
+//         }));
+//     } else {
+//         // Handle single file case
+//         Room.photos = [{
+//             path: req.files.photos.path.replace("\\", "/"),
+//             name: req.files.photos.filename || req.files.photos.originalname
+//         }];
+//     }
+// }
+
+//         // Parse the equipment data sent from frontend
+//         if (req.body.selectedEquipment) {
+//             try {
+//                 const selectedEquipmentArray = JSON.parse(req.body.selectedEquipment);
+//                 Room.Equipement = selectedEquipmentArray.map(item => ({
+//                     name: item.name,
+//                     path: item.icon // We're using the icon ID as the path since we can't send the actual file
+//                 }));
+//             } catch (parseError) {
+//                 console.error('Error parsing equipment data:', parseError);
+//             }
+//         }
+
+//         await Room.save();
+//         res.status(201).send(Room);
+//     } catch (err) {
+//         console.error('Error saving room:', err);
+//         res.status(422).send({
+//             message: 'Failed to save room',
+//             error: err.message
+//         });
+//     }
+// };
+
+
+
+
+
 const CreateRoom = async (req, res) => {
     try {
+        // Manual validation before creating the room
+        const validationErrors = [];
+        
+        // Required fields validation
+        const requiredFields = ['type', 'etat', 'disponibilite', 'region', 'ville', 'quartier', 'price', 'cautionnement', 'nombreDeColocation', 'description', 'chambres', 'lits', 'sdb'];
+        
+        requiredFields.forEach(field => {
+            if (!req.body[field] || req.body[field] === '') {
+                validationErrors.push(`${field} est requis`);
+            }
+        });
+        
+        // Type-specific validation
+        if (req.body.type) {
+            if (['appartement', 'chambre partagé'].includes(req.body.type)) {
+                if (!req.body.etage || req.body.etage <= 0) {
+                    validationErrors.push('L\'étage est requis pour les appartements et chambres partagées');
+                }
+                if (!req.body.assensceur || !['avec', 'sans'].includes(req.body.assensceur)) {
+                    validationErrors.push('L\'ascenseur (avec/sans) est requis pour les appartements et chambres partagées');
+                }
+            }
+            
+            if (['maison', 'villa'].includes(req.body.type)) {
+                if (!req.body.garage || !['avec', 'sans'].includes(req.body.garage)) {
+                    validationErrors.push('Le garage (avec/sans) est requis pour les maisons et villas');
+                }
+            }
+        }
+        
+        // Photos validation
+        if (!req.files || !req.files.photos || 
+            (Array.isArray(req.files.photos) && req.files.photos.length === 0)) {
+            validationErrors.push('Au moins une photo est requise');
+        }
+        
+        // Price validation
+        if (req.body.price && (isNaN(req.body.price) || Number(req.body.price) <= 0)) {
+            validationErrors.push('Le prix doit être un nombre supérieur à 0');
+        }
+        
+        // Cautionnement validation
+        if (req.body.cautionnement && (isNaN(req.body.cautionnement) || Number(req.body.cautionnement) < 0)) {
+            validationErrors.push('Le cautionnement doit être un nombre supérieur ou égal à 0');
+        }
+        
+        // Description validation
+        if (req.body.description && req.body.description.length < 10) {
+            validationErrors.push('La description doit contenir au moins 10 caractères');
+        }
+        
+        // Capacity validation
+        const capacityFields = ['chambres', 'lits', 'sdb', 'nombreDeColocation'];
+        capacityFields.forEach(field => {
+            if (req.body[field] && (isNaN(req.body[field]) || Number(req.body[field]) < 1)) {
+                validationErrors.push(`${field} doit être un nombre supérieur à 0`);
+            }
+        });
+        
+        // Date validation
+        if (req.body.disponibilite) {
+            const availabilityDate = new Date(req.body.disponibilite);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            if (availabilityDate < today) {
+                validationErrors.push('La date de disponibilité doit être aujourd\'hui ou dans le futur');
+            }
+        }
+        
+        // If there are validation errors, return them
+        if (validationErrors.length > 0) {
+            return res.status(400).json({
+                message: 'Erreurs de validation',
+                errors: validationErrors
+            });
+        }
+        
         // Create the room with the basic form data
         let Room = new RoomModel({
             ...req.body,
             user_id: req.user._id,
             lastOwner: req.user._id
-
         });
-
+        
         // Handle photos
-        // Handle photos
-if (req.files && req.files.photos) {
-    // Check if photos is an array or a single file
-    if (Array.isArray(req.files.photos)) {
-        Room.photos = req.files.photos.map(photo => ({
-            path: photo.path.replace("\\", "/"), // Normalize the path
-            name: photo.filename || photo.originalname
-        }));
-    } else {
-        // Handle single file case
-        Room.photos = [{
-            path: req.files.photos.path.replace("\\", "/"),
-            name: req.files.photos.filename || req.files.photos.originalname
-        }];
-    }
-}
-
+        if (req.files && req.files.photos) {
+            // Check if photos is an array or a single file
+            if (Array.isArray(req.files.photos)) {
+                Room.photos = req.files.photos.map(photo => ({
+                    path: photo.path.replace("\\", "/"), // Normalize the path
+                    name: photo.filename || photo.originalname
+                }));
+            } else {
+                // Handle single file case
+                Room.photos = [{
+                    path: req.files.photos.path.replace("\\", "/"),
+                    name: req.files.photos.filename || req.files.photos.originalname
+                }];
+            }
+        }
+        
         // Parse the equipment data sent from frontend
         if (req.body.selectedEquipment) {
             try {
@@ -134,17 +266,46 @@ if (req.files && req.files.photos) {
                 console.error('Error parsing equipment data:', parseError);
             }
         }
-
+        
+        // Save the room (this will trigger Mongoose validation as well)
         await Room.save();
-        res.status(201).send(Room);
+        
+        res.status(201).json({
+            message: 'Logement créé avec succès',
+            room: Room
+        });
+        
     } catch (err) {
         console.error('Error saving room:', err);
-        res.status(422).send({
-            message: 'Failed to save room',
+        
+        // Handle Mongoose validation errors
+        if (err.name === 'ValidationError') {
+            const validationErrors = Object.values(err.errors).map(error => error.message);
+            return res.status(400).json({
+                message: 'Erreurs de validation',
+                errors: validationErrors
+            });
+        }
+        
+        res.status(422).json({
+            message: 'Échec de la sauvegarde du logement',
             error: err.message
         });
     }
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // const incrementOccupants = async (req, res) => {
 //     const roomId = req.params.id;

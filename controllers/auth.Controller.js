@@ -71,72 +71,154 @@ exports.login = async (req, res) => {
 
 
 exports.register = async (req, res) => {
-    try {
-
-           // Check if email is banned first
-      const bannedEmail = await BannedEmailModel.findOne({ email: req.body.email });
-      if (bannedEmail) {
-        return res.status(403).send({ 
-          message: 'Cette adresse email est interdite d\'inscription.',
-          banned: true 
-        });
-      }
-
-      const existingUser = await UserModel.findOne({ email: req.body.email });
-      if (existingUser) {
-        return res.status(422).send({ message: 'User already exists!' });
-      }
-
-        const photoPath = req.files?.photo?.path;
-
-    // ✅ Validate image via YOLOv5 Flask API
-        if (photoPath) {
-          const form = new FormData();
-          form.append('image', fs.createReadStream(photoPath));
-
-          const response = await axios.post('http://127.0.0.1:5000/predict', form, {
-            headers: form.getHeaders(),
-          });
-
-         const { prediction, probabilities } = response.data;
-
-      if (prediction !== 'a real human') {
-        // Optional: Delete the uploaded file (cleanup)
-        fs.unlinkSync(photoPath);
+  try {
+    // 1. Validate required fields
+    const requiredFields = [
+      'firstname', 'lastname', 'age', 'email', 'password', 
+      'gender', 'phoneNumber', 'governorate', 'city', 
+      'profession', 'workplace', 'budget'
+    ];
+    
+    for (const field of requiredFields) {
+      if (!req.body[field] || req.body[field].toString().trim() === '') {
         return res.status(400).send({
-          message: `Profile photo not accepted  ! try another one`
+          message: `${field} is required`
         });
       }
     }
-  
-      const privatekey = await bcrypt.genSalt(12);
-      const hashedPassword = await bcrypt.hash(req.body.password, privatekey);
-  
-      // Create user with all form data
-      const newUser = new UserModel({
-        ...req.body,
-        password: hashedPassword,
-        photo: photoPath || null      //req.files?.photo ? req.files.photo.path : null
-      });
-  
-      await newUser.save();
-  
-      // Generate a token for the new user
-      let token = jwt.sign({ _id: newUser._id, role: 'test' }, process.env.SECRET);
-  
-      // Send the token and user information in the response
-      res.send({
-        firstname: newUser.firstname,
-        token: token
-      });
-  
-    } catch (err) {
-      res.status(500).send({
-        message: 'Registration failed',
-        error: err.message
+
+    // 2. Validate firstname and lastname minimum length (3 characters)
+    if (req.body.firstname.trim().length < 3) {
+      return res.status(400).send({
+        message: 'Le prénom doit contenir au moins 3 caractères'
       });
     }
-  };
+
+    if (req.body.lastname.trim().length < 3) {
+      return res.status(400).send({
+        message: 'Le nom doit contenir au moins 3 caractères'
+      });
+    }
+
+    // 3. Validate Tunisian phone number
+    const phoneRegex = /^(\+216|00216|216)?[2-9]\d{7}$/;
+    const cleanPhone = req.body.phoneNumber.replace(/\s+/g, '');
+    
+    if (!phoneRegex.test(cleanPhone)) {
+      return res.status(400).send({
+        message: 'Numéro de téléphone invalide. Format accepté: +216XXXXXXXX ou 2XXXXXXX (8 chiffres)'
+      });
+    }
+
+
+      // 4. Validate password strength
+    const password = req.body.password;
+    
+    if (password.length < 6) {
+      return res.status(400).send({
+        message: 'Le mot de passe doit contenir au moins 6 caractères'
+      });
+    }
+
+    // Strong password validation (at least one uppercase, one lowercase, one number)
+    const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{6,}$/;
+    
+    if (!strongPasswordRegex.test(password)) {
+      return res.status(400).send({
+        message: 'Le mot de passe doit contenir au moins: 1 majuscule, 1 minuscule, 1 chiffre et 6 caractères minimum'
+      });
+    }
+
+
+    // 5. Validate age (must be 2 digits, between 10-60)
+    const age = parseInt(req.body.age);
+    
+    if (isNaN(age) || age < 10 || age > 60) {
+      return res.status(400).send({
+        message: 'L\'âge doit être entre 10 et 60 ans'
+      });
+    }
+
+    // 6. Validate budget (max 1000)
+    const budget = parseInt(req.body.budget);
+    
+    if (isNaN(budget) || budget <= 0 || budget > 1000) {
+      return res.status(400).send({
+        message: 'Le budget doit être entre 1 et 1000'
+      });
+    }
+
+    // 5. Check if photo is uploaded
+    if (!req.files?.photo) {
+      return res.status(400).send({
+        message: 'Profile photo is required'
+      });
+    }
+
+    // 6. Check if email is banned
+    const bannedEmail = await BannedEmailModel.findOne({ email: req.body.email });
+    if (bannedEmail) {
+      return res.status(403).send({ 
+        message: 'Cette adresse email est interdite d\'inscription.',
+        banned: true 
+      });
+    }
+
+    // 7. Check if user already exists
+    const existingUser = await UserModel.findOne({ email: req.body.email });
+    if (existingUser) {
+      return res.status(422).send({ 
+        message: 'User already exists!' 
+      });
+    }
+
+    // 8. Get photo path and validate image via YOLOv5 Flask API
+    const photoPath = req.files.photo.path;
+    const form = new FormData();
+    form.append('image', fs.createReadStream(photoPath));
+
+    const response = await axios.post('http://127.0.0.1:5000/predict', form, {
+      headers: form.getHeaders(),
+    });
+
+    const { prediction, probabilities } = response.data;
+
+    if (prediction !== 'a real human') {
+      // Delete the uploaded file (cleanup)
+      fs.unlinkSync(photoPath);
+      return res.status(400).send({
+        message: 'Profile photo not accepted! Try another one.'
+      });
+    }
+
+    // 8. Hash password
+    const privatekey = await bcrypt.genSalt(12);
+    const hashedPassword = await bcrypt.hash(req.body.password, privatekey);
+
+    // 9. Create and save new user
+    const newUser = new UserModel({
+      ...req.body,
+      password: hashedPassword,
+      photo: photoPath
+    });
+
+    await newUser.save();
+
+    // 10. Generate token and send response
+    const token = jwt.sign({ _id: newUser._id, role: 'test' }, process.env.SECRET);
+
+    res.send({
+      firstname: newUser.firstname,
+      token: token
+    });
+
+  } catch (err) {
+    res.status(500).send({
+      message: 'Registration failed',
+      error: err.message
+    });
+  }
+};
 
 // exports.login = async(req, res) => {
 
