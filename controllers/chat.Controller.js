@@ -85,7 +85,8 @@ exports.getConversations = async (req, res) => {
                     "other"
                   ]
                 },
-                timestamp: "$createdAt"
+                timestamp: "$createdAt",
+                isRead: "$isRead"
               }
             }
           }
@@ -126,14 +127,18 @@ exports.getConversations = async (req, res) => {
         $filter: {
           input: "$messages",
           as: "msg",
-          cond: { $eq: ["$$msg.sender", "other"] } // messages from others
+          cond: { 
+                  $and: [
+                    { $eq: ["$$msg.sender", "other"] },
+                    { $eq: ["$$msg.isRead", false] }
+                  ]
+                }
+              }
+            }
+          }
         }
       }
-    }
-  }
-}
-
-      ]);
+    ]);
       
       res.status(200).json(conversations);
     } catch (error) {
@@ -213,8 +218,7 @@ exports.markMessagesAsRead = async (req, res) => {
       return res.status(400).json({ message: 'Invalid conversation ID' });
     }
 
-    // Mark as read all messages sent to this user in that conversation
-    await ChatModel.updateMany(
+     const result = await ChatModel.updateMany(
       {
         sender: conversationId,
         receiver: userId,
@@ -223,7 +227,17 @@ exports.markMessagesAsRead = async (req, res) => {
       { $set: { isRead: true } }
     );
 
-    res.status(200).json({ message: 'Messages marked as read' });
+    // Emit socket event to notify sender that messages were read
+    const io = getIO();
+    io.to(conversationId.toString()).emit('messages_read', {
+      readBy: userId,
+      conversationId: conversationId
+    });
+
+    res.status(200).json({ 
+      message: 'Messages marked as read',
+      modifiedCount: result.modifiedCount
+    });
   } catch (error) {
     console.error('Error marking messages as read:', error);
     res.status(500).json({ message: 'Internal server error' });

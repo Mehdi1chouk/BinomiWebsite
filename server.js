@@ -25,23 +25,7 @@ const io = socketIO.init(server);
 mongoose.connect(process.env.DB).
 then(() => console.log('mongodb connected')).catch((err) => console.log('error connecting to', err))
 
-// const serverr = require('http').createServer(app);
-// const io = require('socket.io')(serverr);
 
-// io.on('connection', (client) => {
-//     console.log(`User connected: ${client._id}`);
-
-//     client.on('user_logged_in', (firstname) => {
-//         console.log(`${firstname} has logged in`);
-//     });
-
-//     client.on('disconnect', () => {
-//         console.log(`User disconnected: ${client._id}`);
-//     });
-// });
 
 server.listen(process.env.PORT, () => { console.log('server connected on port 3003...') })
 
-// server.get('/', (req, res) => {
-//     res.send('hello')
-// })
