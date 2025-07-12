@@ -191,8 +191,6 @@ exports.getConversations = async (req, res) => {
   };
 
 
-  // In chatController.js
-// In chatController.js
 exports.getUnreadMessagesCount = async (req, res) => {
   try {
     const userId = req.user._id;

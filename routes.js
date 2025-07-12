@@ -79,6 +79,9 @@ module.exports = (server) => {
     server.post('/notifications/:notificationId/refuse', verifytoken, notifController.refuseNotification);
     server.delete('/notifications/:notificationId', verifytoken,notifController.deleteNotification);
 
+    server.get('/notifications/check-status', verifytoken, notifController.checkNotificationStatus);
+    server.get('/conversations/check-existing', verifytoken, notifController.checkExistingConversation);
+
 
     // chat
     //server.post('/chat',verifytoken,chatController.sendMessage);

@@ -3,54 +3,190 @@ const UserModel = require("../models/User.model");
 const { getIO } = require('../socketio'); // Import Socket.IO instance
 const ChatModel = require('../models/Chat.model');
 
-const sendNotification = async(req, res) => {
-    try {
-        const { senderId, receiverId, message } = req.body; // Get request data
+// const sendNotification = async(req, res) => {
+//     try {
+//         const { senderId, receiverId, message } = req.body; // Get request data
 
 
-        // Verify sender and receiver exist
-        const sender = await UserModel.findById(senderId);
-        const receiver = await UserModel.findById(receiverId);
+//         // Verify sender and receiver exist
+//         const sender = await UserModel.findById(senderId);
+//         const receiver = await UserModel.findById(receiverId);
 
-        if (!sender || !receiver) {
-            return res.status(404).json({ message: 'Sender or Receiver not found' });
-        }
+//         if (!sender || !receiver) {
+//             return res.status(404).json({ message: 'Sender or Receiver not found' });
+//         }
 
-        // Save notification to the database
-        const notification = new NotificationModel({
-            sender: senderId,
-            receiver: receiverId,
-            message
-        });
+//         // Save notification to the database
+//         const notification = new NotificationModel({
+//             sender: senderId,
+//             receiver: receiverId,
+//             message
+//         });
 
-        await notification.save();
-        console.log('Notification saved in database:', notification);
-         const populatedNotification = await NotificationModel.findById(notification._id)
-            .populate('sender', 'firstname lastname photo');
+//         await notification.save();
+//         console.log('Notification saved in database:', notification);
+//          const populatedNotification = await NotificationModel.findById(notification._id)
+//             .populate('sender', 'firstname lastname photo');
         
-        // Emit notification to all connected clients
-        const io = getIO();
-        io.emit('receive_notification', {
-            _id: notification._id,
-            sender: populatedNotification.sender,
-            receiverId: receiverId,
-            message,
-            createdAt: notification.createdAt
-        });
+//         // Emit notification to all connected clients
+//         const io = getIO();
+//         io.emit('receive_notification', {
+//             _id: notification._id,
+//             sender: populatedNotification.sender,
+//             receiverId: receiverId,
+//             message,
+//             createdAt: notification.createdAt
+//         });
         
-        res.status(200).json({ 
-            message: 'Notification sent successfully',
-            notification 
-        });
+//         res.status(200).json({ 
+//             message: 'Notification sent successfully',
+//             notification 
+//         });
         
-    } catch (error) {
-        console.error('Error sending notification:', error);
-        res.status(500).json({
-            message: 'Error sending notification',
-            error: error.message
-        });
+//     } catch (error) {
+//         console.error('Error sending notification:', error);
+//         res.status(500).json({
+//             message: 'Error sending notification',
+//             error: error.message
+//         });
+//     }
+// };
+
+
+// Add these new functions to your existing notification controller
+
+// Check relationship status between two users
+
+
+const checkNotificationStatus = async (req, res) => {
+  try {
+    const { receiverId, senderId } = req.query;
+    
+    if (!receiverId || !senderId) {
+      return res.status(400).json({ error: 'Both receiverId and senderId are required' });
     }
+
+    // Check for pending notifications (both directions)
+    const pendingNotification = await NotificationModel.findOne({
+      $or: [
+        { sender: senderId, receiver: receiverId, status: 'pending' },
+        { sender: receiverId, receiver: senderId, status: 'pending' }
+      ]
+    });
+
+    // Check for accepted notifications (both directions)
+    const acceptedNotification = await NotificationModel.findOne({
+      $or: [
+        { sender: senderId, receiver: receiverId, status: 'accepted' },
+        { sender: receiverId, receiver: senderId, status: 'accepted' }
+      ]
+    });
+
+    res.json({
+      hasPending: !!pendingNotification,
+      hasAccepted: !!acceptedNotification,
+      relationshipStatus: acceptedNotification ? 'friends' : (pendingNotification ? 'pending' : 'none')
+    });
+
+  } catch (error) {
+    console.error('Error checking notification status:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 };
+
+// Updated sendNotification function to prevent duplicates
+const sendNotification = async (req, res) => {
+  try {
+    const { senderId, receiverId, message } = req.body;
+    
+    // Verify sender and receiver exist
+    const sender = await UserModel.findById(senderId);
+    const receiver = await UserModel.findById(receiverId);
+
+    if (!sender || !receiver) {
+      return res.status(404).json({ message: 'Sender or Receiver not found' });
+    }
+
+    // Check if there's already a pending or accepted notification between these users
+    const existingNotification = await NotificationModel.findOne({
+      $or: [
+        { sender: senderId, receiver: receiverId, status: { $in: ['pending', 'accepted'] } },
+        { sender: receiverId, receiver: senderId, status: { $in: ['pending', 'accepted'] } }
+      ]
+    });
+
+    if (existingNotification) {
+      return res.status(409).json({ 
+        error: 'A notification already exists between these users',
+        status: existingNotification.status 
+      });
+    }
+
+    // Create new notification
+    const notification = new NotificationModel({
+      sender: senderId,
+      receiver: receiverId,
+      message,
+      status: 'pending'
+    });
+
+    await notification.save();
+    console.log('Notification saved in database:', notification);
+    
+    // Populate sender info for socket emission
+    const populatedNotification = await NotificationModel.findById(notification._id)
+      .populate('sender', 'firstname lastname photo');
+
+    // Emit notification to all connected clients
+    const io = getIO();
+    io.emit('receive_notification', {
+      _id: notification._id,
+      sender: populatedNotification.sender,
+      receiverId: receiverId,
+      message,
+      createdAt: notification.createdAt,
+      status: notification.status
+    });
+
+    res.status(200).json({ 
+      message: 'Notification sent successfully',
+      notification 
+    });
+
+  } catch (error) {
+    console.error('Error sending notification:', error);
+    res.status(500).json({
+      message: 'Error sending notification',
+      error: error.message
+    });
+  }
+};
+
+// Check if users have an existing conversation
+const checkExistingConversation = async (req, res) => {
+  try {
+    const { userId } = req.query;
+    const currentUserId = req.user._id;
+
+    // Check if conversation exists between these users using your ChatModel
+    const conversation = await ChatModel.findOne({
+      $or: [
+        { sender: currentUserId, receiver: userId },
+        { sender: userId, receiver: currentUserId }
+      ]
+    });
+
+    res.json({
+      hasConversation: !!conversation,
+      conversationId: conversation ? conversation._id : null
+    });
+
+  } catch (error) {
+    console.error('Error checking existing conversation:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 
 
 const getNotifications = async(req, res) => {
@@ -199,4 +335,5 @@ const deleteNotification = async (req, res) => {
 };
 
 
-module.exports = { sendNotification,getNotifications,acceptNotification,refuseNotification,deleteNotification }
+module.exports = { sendNotification,getNotifications,acceptNotification,refuseNotification,deleteNotification,
+  checkNotificationStatus,checkExistingConversation }
