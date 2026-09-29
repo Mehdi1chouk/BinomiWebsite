@@ -11,7 +11,18 @@ const path = require('path');
 
 const getAll = async (req, res) => {
     try {
-      const usersList = await UserModel.find().lean();
+      // Unverified viewers can browse everyone (verified and unverified) —
+      // they just can't filter, message, or see house details, per the
+      // requireVerified gates elsewhere. Verified viewers only see verified
+      // profiles, so a lapsed/unverified account (e.g. after a photo change)
+      // drops out of their feed immediately.
+      const viewer = await UserModel.findById(req.user._id).select('isVerified');
+      const query = { role: { $ne: 'admin' }, isBanned: { $ne: true } };
+      if (viewer?.isVerified) {
+        query.isVerified = true;
+      }
+
+      const usersList = await UserModel.find(query).lean();
       
       // Fetch rooms for each user
       const usersWithRooms = await Promise.all(usersList.map(async (user) => {
@@ -73,8 +84,11 @@ const updateUser = async (req, res) => {
                 }
             }
 
-            // Save new image path
+            // Save new image path — the previous face verification (if any)
+            // was tied to the OLD photo, so it no longer proves anything
+            // about this one.
             updatedData.photo = req.files.photo.path;
+            updatedData.isVerified = false;
         } else {
             // If no new photo, remove photo from updatedData to keep the existing one
             delete updatedData.photo;
@@ -106,6 +120,17 @@ const getUserById = async (req, res) => {
 
         if (!user) {
             return res.status(404).send({ message: 'User not found' });
+        }
+
+        // An unverified profile is unreachable to VERIFIED viewers (matches
+        // them never seeing it in the list either), but stays reachable to
+        // unverified viewers — who see everyone — and to its own owner.
+        const isSelf = req.user?._id?.toString() === req.params.id;
+        if (!isSelf && !user.isVerified) {
+            const viewer = await UserModel.findById(req.user._id).select('isVerified');
+            if (viewer?.isVerified) {
+                return res.status(404).send({ message: 'User not found' });
+            }
         }
 
         // Format photo URL
@@ -163,7 +188,7 @@ const filterUser = async (req, res) => {
       gender // Add gender to the destructured parameters
     } = req.body;
 
-    let query = {};
+    let query = { role: { $ne: 'admin' }, isBanned: { $ne: true }, isVerified: true };
 
     // Basic filters
     if (governorate) query.governorate = governorate;

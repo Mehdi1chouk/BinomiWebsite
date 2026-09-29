@@ -6,7 +6,7 @@ module.exports = {
     init: (server) => {
         io = new Server(server, {
             cors: {
-                origin: "http://localhost:5173", // Your frontend URL
+                origin: ["http://localhost:5173", "http://localhost:4200"], // React (Vite) and Angular dev servers
                 methods: ["GET", "POST"],
                 allowedHeaders: ["Authorization"],
                 credentials: true

@@ -48,7 +48,7 @@ exports.login = async (req, res) => {
       return res.status(422).send({ message: 'Mot de passe incorrect.' });
     }
 
-    const token = jwt.sign({ _id: user._id, role: 'test' }, process.env.SECRET);
+    const token = jwt.sign({ _id: user._id, role: user.role, tokenVersion: user.tokenVersion }, process.env.SECRET);
 
     // Emit socket event
     const io = socketIO.getIO();
@@ -57,7 +57,8 @@ exports.login = async (req, res) => {
     return res.send({
       firstname: user.firstname,
       token,
-      gender: user.gender
+      gender: user.gender,
+      role: user.role
     });
 
   } catch (err) {
@@ -74,9 +75,9 @@ exports.register = async (req, res) => {
   try {
     // 1. Validate required fields
     const requiredFields = [
-      'firstname', 'lastname', 'age', 'email', 'password', 
-      'gender', 'phoneNumber', 'governorate', 'city', 
-      'profession', 'workplace', 'budget'
+      'firstname', 'lastname', 'age', 'email', 'password',
+      'gender', 'governorate', 'city',
+      'profession', 'workplace'
     ];
     
     for (const field of requiredFields) {
@@ -99,17 +100,6 @@ exports.register = async (req, res) => {
         message: 'Le nom doit contenir au moins 3 caractères'
       });
     }
-
-    // 3. Validate Tunisian phone number
-    const phoneRegex = /^(\+216|00216|216)?[2-9]\d{7}$/;
-    const cleanPhone = req.body.phoneNumber.replace(/\s+/g, '');
-    
-    if (!phoneRegex.test(cleanPhone)) {
-      return res.status(400).send({
-        message: 'Numéro de téléphone invalide. Format accepté: +216XXXXXXXX ou 2XXXXXXX (8 chiffres)'
-      });
-    }
-
 
       // 4. Validate password strength
     const password = req.body.password;
@@ -139,13 +129,14 @@ exports.register = async (req, res) => {
       });
     }
 
-    // 6. Validate budget (max 1000)
-    const budget = parseInt(req.body.budget);
-    
-    if (isNaN(budget) || budget <= 0 || budget > 1000) {
-      return res.status(400).send({
-        message: 'Le budget doit être entre 1 et 1000'
-      });
+    // 6. Validate budget (optional — only checked when provided)
+    if (req.body.budget !== undefined && req.body.budget !== '') {
+      const budget = parseInt(req.body.budget);
+      if (isNaN(budget) || budget <= 0 || budget > 1000) {
+        return res.status(400).send({
+          message: 'Le budget doit être entre 1 et 1000'
+        });
+      }
     }
 
     // 5. Check if photo is uploaded
@@ -195,9 +186,21 @@ exports.register = async (req, res) => {
     const privatekey = await bcrypt.genSalt(12);
     const hashedPassword = await bcrypt.hash(req.body.password, privatekey);
 
+    // Preferences arrive as a JSON string (multipart form field) — parse it
+    // back into an object before it hits the schema's nested arrays.
+    let preferences;
+    if (req.body.preferences) {
+      try {
+        preferences = JSON.parse(req.body.preferences);
+      } catch (e) {
+        preferences = undefined;
+      }
+    }
+
     // 9. Create and save new user
     const newUser = new UserModel({
       ...req.body,
+      preferences,
       password: hashedPassword,
       photo: photoPath
     });
@@ -205,7 +208,7 @@ exports.register = async (req, res) => {
     await newUser.save();
 
     // 10. Generate token and send response
-    const token = jwt.sign({ _id: newUser._id, role: 'test' }, process.env.SECRET);
+    const token = jwt.sign({ _id: newUser._id, role: newUser.role, tokenVersion: newUser.tokenVersion }, process.env.SECRET);
 
     res.send({
       firstname: newUser.firstname,

@@ -33,45 +33,27 @@ exports.reportUser = async (req, res) => {
             return res.status(404).send({ message: 'Utilisateur non trouvé' });
         }
         
+        if (!reason || !reason.trim()) {
+            return res.status(400).send({ message: 'Veuillez préciser la raison du signalement' });
+        }
+
         // Create the report
         const newReport = new ReportModel({
             reporterId,
             reportedUserId,
-            reason: reason || 'Inappropriate behavior'
+            reason: reason.trim()
         });
-        
+
         await newReport.save();
-        
+
         // Count total reports for this user
         const reportCount = await ReportModel.countDocuments({ reportedUserId });
-        
-        // If user has been reported 3 or more times, ban them
-        if (reportCount >= 3) {
-            // Check if email is already banned
-            const existingBan = await BannedEmailModel.findOne({ email: reportedUser.email });
-            
-            if (!existingBan) {
-                // Ban the email
-                const bannedEmail = new BannedEmailModel({
-                    email: reportedUser.email,
-                    userId: reportedUserId,
-                    reportCount: reportCount
-                });
-                
-                await bannedEmail.save();
-                
-                return res.send({ 
-                    message: 'Utilisateur signalé et banni avec succès',
-                    banned: true,
-                    reportCount 
-                });
-            }
-        }
-        
-        res.send({ 
+
+        // Banning is now an admin decision made from the moderation dashboard
+        // (based on reviewing the actual reasons), not an automatic threshold.
+        res.send({
             message: 'Utilisateur signalé avec succès',
-            banned: false,
-            reportCount 
+            reportCount
         });
         
     } catch (err) {

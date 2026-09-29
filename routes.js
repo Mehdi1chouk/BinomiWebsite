@@ -6,8 +6,10 @@ const chatController = require('./controllers/chat.Controller')
 const multiparty = require('connect-multiparty')
 const uploadmiddleware = multiparty({ uploadDir: './UsersImages' })
 const uploadroomImages = multiparty({ uploadDir: './RoomImages' })
-const { verifytoken } = require('./middlewares/AuthMiddleWare')
+const { verifytoken, requireAdmin, requireVerified } = require('./middlewares/AuthMiddleWare')
 const reportController = require('./controllers/report.Controller');
+const adminController = require('./controllers/admin.Controller');
+const verificationController = require('./controllers/verification.Controller');
 module.exports = (server) => {
 
 
@@ -16,10 +18,20 @@ module.exports = (server) => {
     server.post('/users', uploadmiddleware, UserController.CreateUser)
     server.put('/users/:id',verifytoken,uploadmiddleware,UserController.updateUser)
     server.delete('/users/:id', UserController.deleteUser)
-    server.post('/users/filter', verifytoken,UserController.filterUser);
-    server.get('/users/:id', UserController.getUserById);
+    server.post('/users/filter', verifytoken, requireVerified, UserController.filterUser);
+    server.get('/users/:id', verifytoken, UserController.getUserById);
 
     server.post('/report', verifytoken, reportController.reportUser);
+
+    //photo verification
+    server.post('/verify-face', verifytoken, uploadmiddleware, verificationController.verifyFace);
+
+    //admin
+    server.get('/admin/reported-users', verifytoken, requireAdmin, adminController.getReportedUsers);
+    server.get('/admin/reports/:userId', verifytoken, requireAdmin, adminController.getReportsForUser);
+    server.post('/admin/users/:userId/alert', verifytoken, requireAdmin, adminController.sendAlert);
+    server.post('/admin/users/:userId/ban', verifytoken, requireAdmin, adminController.banUser);
+    server.post('/admin/users/:userId/unban', verifytoken, requireAdmin, adminController.unbanUser);
 
 
     //auth
@@ -50,7 +62,7 @@ module.exports = (server) => {
     server.post('/room', verifytoken, uploadroomImages, RoomController.CreateRoom)
     server.put('/room/:id',  verifytoken,uploadroomImages, RoomController.updateRoom)
     server.delete('/room/:id', RoomController.deleteRoom)
-    server.get('/room/:id', RoomController.getRoomById);
+    server.get('/room/:id', verifytoken, requireVerified, RoomController.getRoomById);
     
     server.patch('/room/:id/incrementOccupants', RoomController.incrementOccupants);
     server.patch('/room/:id/decrementOccupants', RoomController.decrementOccupants);
@@ -64,6 +76,8 @@ module.exports = (server) => {
     server.patch('/room/current/decrement', verifytoken,RoomController.decrementCurrentUserOccupants);
     // Archive current user's room
     server.put('/room/current/archive', verifytoken, RoomController.archiveCurrentUserRoom);
+    // What binome button to show for a given other user (propose / pending / already binome)
+    server.get('/room/binome-status/:otherUserId', verifytoken, RoomController.getBinomeStatus);
 
 
 
@@ -73,8 +87,11 @@ module.exports = (server) => {
 
     //notifications
     // For sending a notification
-    server.post('/notif', verifytoken, notifController.sendNotification);
+    server.post('/notif', verifytoken, requireVerified, notifController.sendNotification);
+    server.post('/notif/binome', verifytoken, notifController.proposeBinome);
     server.get('/notifications', verifytoken, notifController.getNotifications);
+    server.get('/notifications/unread-count', verifytoken, notifController.getUnreadNotificationsCount);
+    server.post('/notifications/mark-all-read', verifytoken, notifController.markAllNotificationsAsRead);
     server.post('/notifications/:notificationId/accept', verifytoken, notifController.acceptNotification);
     server.post('/notifications/:notificationId/refuse', verifytoken, notifController.refuseNotification);
     server.delete('/notifications/:notificationId', verifytoken,notifController.deleteNotification);
@@ -87,7 +104,7 @@ module.exports = (server) => {
     //server.post('/chat',verifytoken,chatController.sendMessage);
     server.get('/conversations', verifytoken, chatController.getConversations);
     server.get('/conversations/:conversationId/messages', verifytoken, chatController.getMessages);
-    server.post('/conversations/:conversationId/messages', verifytoken, chatController.sendMessage);
+    server.post('/conversations/:conversationId/messages', verifytoken, requireVerified, chatController.sendMessage);
     server.get('/messages/unread/count', verifytoken, chatController.getUnreadMessagesCount);
     server.patch('/conversations/:conversationId/read', verifytoken, chatController.markMessagesAsRead);
 

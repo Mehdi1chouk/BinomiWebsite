@@ -199,6 +199,10 @@ const Schema = mongoose.Schema({
         type: Number,
         default: 0
     },
+    occupants: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: UserModel
+    }],
     lastOwner: {
         type: mongoose.Schema.Types.ObjectId,
         ref: UserModel

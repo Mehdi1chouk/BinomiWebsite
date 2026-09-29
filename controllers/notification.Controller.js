@@ -2,6 +2,9 @@ const NotificationModel = require('../models/Notification.model');
 const UserModel = require("../models/User.model");
 const { getIO } = require('../socketio'); // Import Socket.IO instance
 const ChatModel = require('../models/Chat.model');
+const RoomModel = require('../models/Room.model');
+
+const resolvePhotoUrl = (photo) => (photo ? `http://localhost:3003/${photo.replace(/\\/g, '/')}` : null);
 
 // const sendNotification = async(req, res) => {
 //     try {
@@ -66,8 +69,11 @@ const checkNotificationStatus = async (req, res) => {
       return res.status(400).json({ error: 'Both receiverId and senderId are required' });
     }
 
-    // Check for pending notifications (both directions)
+    // Check for pending notifications (both directions) — contact requests only,
+    // so an in-progress binome proposal between existing friends doesn't get
+    // mistaken for a fresh contact request.
     const pendingNotification = await NotificationModel.findOne({
+      type: 'contact',
       $or: [
         { sender: senderId, receiver: receiverId, status: 'pending' },
         { sender: receiverId, receiver: senderId, status: 'pending' }
@@ -76,6 +82,7 @@ const checkNotificationStatus = async (req, res) => {
 
     // Check for accepted notifications (both directions)
     const acceptedNotification = await NotificationModel.findOne({
+      type: 'contact',
       $or: [
         { sender: senderId, receiver: receiverId, status: 'accepted' },
         { sender: receiverId, receiver: senderId, status: 'accepted' }
@@ -107,8 +114,9 @@ const sendNotification = async (req, res) => {
       return res.status(404).json({ message: 'Sender or Receiver not found' });
     }
 
-    // Check if there's already a pending or accepted notification between these users
+    // Check if there's already a pending or accepted contact notification between these users
     const existingNotification = await NotificationModel.findOne({
+      type: 'contact',
       $or: [
         { sender: senderId, receiver: receiverId, status: { $in: ['pending', 'accepted'] } },
         { sender: receiverId, receiver: senderId, status: { $in: ['pending', 'accepted'] } }
@@ -116,9 +124,9 @@ const sendNotification = async (req, res) => {
     });
 
     if (existingNotification) {
-      return res.status(409).json({ 
+      return res.status(409).json({
         error: 'A notification already exists between these users',
-        status: existingNotification.status 
+        status: existingNotification.status
       });
     }
 
@@ -127,7 +135,8 @@ const sendNotification = async (req, res) => {
       sender: senderId,
       receiver: receiverId,
       message,
-      status: 'pending'
+      status: 'pending',
+      type: 'contact'
     });
 
     await notification.save();
@@ -136,12 +145,14 @@ const sendNotification = async (req, res) => {
     // Populate sender info for socket emission
     const populatedNotification = await NotificationModel.findById(notification._id)
       .populate('sender', 'firstname lastname photo');
+    const senderPayload = populatedNotification.sender.toObject();
+    senderPayload.photo = resolvePhotoUrl(senderPayload.photo);
 
     // Emit notification to all connected clients
     const io = getIO();
     io.emit('receive_notification', {
       _id: notification._id,
-      sender: populatedNotification.sender,
+      sender: senderPayload,
       receiverId: receiverId,
       message,
       createdAt: notification.createdAt,
@@ -159,6 +170,85 @@ const sendNotification = async (req, res) => {
       message: 'Error sending notification',
       error: error.message
     });
+  }
+};
+
+// Propose becoming binômes — the counterpart must separately confirm via
+// acceptNotification before the room actually gains an occupant.
+const proposeBinome = async (req, res) => {
+  try {
+    const senderId = req.user._id;
+    const { receiverId } = req.body;
+
+    if (!receiverId) {
+      return res.status(400).json({ message: 'receiverId est requis' });
+    }
+
+    const [sender, receiver, room] = await Promise.all([
+      UserModel.findById(senderId),
+      UserModel.findById(receiverId),
+      RoomModel.findOne({ user_id: senderId })
+    ]);
+
+    if (!sender || !receiver) {
+      return res.status(404).json({ message: 'Utilisateur introuvable' });
+    }
+
+    if (!room) {
+      return res.status(400).json({ message: "Vous devez avoir un logement actif pour proposer un binôme" });
+    }
+
+    const isAlreadyOccupant = room.occupants.some((id) => id.toString() === receiverId);
+    if (isAlreadyOccupant) {
+      return res.status(409).json({ message: 'Cette personne est déjà votre binôme' });
+    }
+
+    if (room.occupants.length >= room.nombreDeColocation) {
+      return res.status(409).json({ message: 'Votre colocation est déjà complète' });
+    }
+
+    const existingProposal = await NotificationModel.findOne({
+      type: 'binome',
+      status: 'pending',
+      $or: [
+        { sender: senderId, receiver: receiverId },
+        { sender: receiverId, receiver: senderId }
+      ]
+    });
+    if (existingProposal) {
+      return res.status(409).json({ message: 'Une proposition est déjà en cours avec cette personne' });
+    }
+
+    const notification = new NotificationModel({
+      sender: senderId,
+      receiver: receiverId,
+      message: `${sender.firstname} vous propose de devenir binômes`,
+      type: 'binome',
+      roomId: room._id,
+      status: 'pending'
+    });
+    await notification.save();
+
+    const populatedNotification = await NotificationModel.findById(notification._id)
+      .populate('sender', 'firstname lastname photo');
+    const senderPayload = populatedNotification.sender.toObject();
+    senderPayload.photo = resolvePhotoUrl(senderPayload.photo);
+
+    const io = getIO();
+    io.to(receiverId.toString()).emit('receive_notification', {
+      _id: notification._id,
+      sender: senderPayload,
+      receiverId,
+      message: notification.message,
+      createdAt: notification.createdAt,
+      status: notification.status,
+      type: notification.type
+    });
+
+    res.status(200).json({ message: 'Proposition envoyée', notification });
+  } catch (error) {
+    console.error('Error proposing binome:', error);
+    res.status(500).json({ message: 'Erreur lors de la proposition', error: error.message });
   }
 };
 
@@ -198,14 +288,44 @@ const getNotifications = async(req, res) => {
         const notifications = await NotificationModel.find({ receiver: userId })
             .populate('sender', 'firstname lastname photo _id')
             .sort({ createdAt: -1 });
-            
-        res.status(200).json(notifications);
+
+        const resolvedNotifications = notifications.map((notification) => {
+            const plain = notification.toObject();
+            if (plain.sender) {
+                plain.sender.photo = resolvePhotoUrl(plain.sender.photo);
+            }
+            return plain;
+        });
+
+        res.status(200).json(resolvedNotifications);
     } catch (error) {
         console.error('Error fetching notifications:', error);
         res.status(500).json({
             message: 'Error fetching notifications',
             error: error.message
         });
+    }
+};
+
+const getUnreadNotificationsCount = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const count = await NotificationModel.countDocuments({ receiver: userId, isRead: false });
+        res.status(200).json({ count });
+    } catch (error) {
+        console.error('Error counting unread notifications:', error);
+        res.status(500).json({ message: 'Error counting unread notifications', error: error.message });
+    }
+};
+
+const markAllNotificationsAsRead = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        await NotificationModel.updateMany({ receiver: userId, isRead: false }, { $set: { isRead: true } });
+        res.status(200).json({ message: 'Notifications marked as read' });
+    } catch (error) {
+        console.error('Error marking notifications as read:', error);
+        res.status(500).json({ message: 'Error marking notifications as read', error: error.message });
     }
 };
 
@@ -224,6 +344,72 @@ const acceptNotification = async (req, res) => {
 
     if (!notification) {
       return res.status(404).json({ message: 'Notification not found' });
+    }
+
+    if (notification.type === 'binome') {
+      // Land the room mutation before touching the notification's own status,
+      // so a failure here (full room, deleted room, etc.) leaves the proposal
+      // exactly as it was — still pending, safe to retry — instead of getting
+      // marked accepted while the room was never actually updated.
+      const room = await RoomModel.findById(notification.roomId);
+      if (!room) {
+        return res.status(404).json({ message: 'Logement introuvable' });
+      }
+
+      const isAlreadyOccupant = room.occupants.some((id) => id.toString() === userId.toString());
+      if (!isAlreadyOccupant) {
+        if (room.occupants.length >= room.nombreDeColocation) {
+          return res.status(409).json({ message: 'Cette colocation est déjà complète' });
+        }
+
+        const newOccupantCount = room.occupants.length + 1;
+        const willBeFull = newOccupantCount >= room.nombreDeColocation;
+
+        // Targeted update instead of fetch+save: save() re-validates the whole
+        // document, including unrelated legacy fields that may predate current
+        // validation rules (e.g. an old room's disponibilite date).
+        await RoomModel.findByIdAndUpdate(room._id, {
+          $push: { occupants: userId },
+          $set: {
+            currentOccupants: newOccupantCount,
+            ...(willBeFull ? { lastOwner: room.user_id } : {})
+          },
+          ...(willBeFull ? { $unset: { user_id: '' } } : {})
+        });
+      }
+
+      notification.isRead = true;
+      notification.status = 'accepted';
+      await notification.save();
+
+      // Let the original proposer know their request was accepted — they
+      // have no other way of finding out short of noticing the binome
+      // status change on their own.
+      const accepter = await UserModel.findById(userId).select('firstname photo');
+      const confirmationNotification = new NotificationModel({
+        sender: userId,
+        receiver: notification.sender,
+        message: `${accepter?.firstname ?? 'Votre binôme'} a accepté votre demande de colocation !`,
+        type: 'binome-accepted',
+        status: 'accepted'
+      });
+      await confirmationNotification.save();
+
+      const io = getIO();
+      io.to(notification.sender.toString()).emit('receive_notification', {
+        _id: confirmationNotification._id,
+        sender: { _id: userId, firstname: accepter?.firstname, photo: resolvePhotoUrl(accepter?.photo) },
+        receiverId: notification.sender,
+        message: confirmationNotification.message,
+        createdAt: confirmationNotification.createdAt,
+        type: 'binome-accepted'
+      });
+
+      return res.status(200).json({
+        message: 'Vous êtes maintenant binômes !',
+        notification,
+        becameBinome: true
+      });
     }
 
     // Mark the notification as accepted/read
@@ -281,18 +467,41 @@ const acceptNotification = async (req, res) => {
       if (!notification) {
         return res.status(404).json({ message: 'Notification not found' });
       }
-  
-      // Mark as read and update status or just delete it
-      // Option 1: Delete the notification
+
+      // Only an actual pending request (contact/binome) being turned down
+      // notifies the original sender — dismissing a purely informational
+      // notification (alert, binome-accepted) isn't "rejecting" anyone.
+      if (notification.type === 'contact' || notification.type === 'binome') {
+        const rejecter = await UserModel.findById(userId).select('firstname photo');
+        const message = notification.type === 'binome'
+          ? `${rejecter?.firstname ?? 'Cette personne'} a refusé votre demande de colocation.`
+          : `${rejecter?.firstname ?? 'Cette personne'} a refusé votre demande de contact.`;
+
+        const rejectionNotification = new NotificationModel({
+          sender: userId,
+          receiver: notification.sender,
+          message,
+          type: 'rejected',
+          status: 'refused'
+        });
+        await rejectionNotification.save();
+
+        const io = getIO();
+        io.to(notification.sender.toString()).emit('receive_notification', {
+          _id: rejectionNotification._id,
+          sender: { _id: userId, firstname: rejecter?.firstname, photo: resolvePhotoUrl(rejecter?.photo) },
+          receiverId: notification.sender,
+          message,
+          createdAt: rejectionNotification.createdAt,
+          type: 'rejected'
+        });
+      }
+
+      // Delete the original pending notification
       await NotificationModel.deleteOne({ _id: notificationId });
-  
-      // Option 2: Mark as read and refused (if you want to keep a record)
-      // notification.isRead = true;
-      // notification.status = 'refused'; // You would need to add this field to your model
-      // await notification.save();
-  
-      res.status(200).json({ 
-        message: 'Notification refused successfully' 
+
+      res.status(200).json({
+        message: 'Notification refused successfully'
       });
   
     } catch (error) {
@@ -336,4 +545,4 @@ const deleteNotification = async (req, res) => {
 
 
 module.exports = { sendNotification,getNotifications,acceptNotification,refuseNotification,deleteNotification,
-  checkNotificationStatus,checkExistingConversation }
+  checkNotificationStatus,checkExistingConversation,proposeBinome,getUnreadNotificationsCount,markAllNotificationsAsRead }

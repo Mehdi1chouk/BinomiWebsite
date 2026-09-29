@@ -4,20 +4,25 @@ const UserModel = require("../models/User.model")
 const crypto = require('crypto');
 // Secret key for encoding/decoding (store this in environment variables in production)
 const SECRET_KEY = '52937680';
-
+const KEY = crypto.createHash('sha256').update(SECRET_KEY).digest().subarray(0, 24);
+const IV_LENGTH = 16;
 
 const encodeRoomId = (roomId) => {
-    const cipher = crypto.createCipher('aes192', SECRET_KEY);
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv('aes-192-cbc', KEY, iv);
     let encrypted = cipher.update(roomId.toString(), 'utf8', 'hex');
     encrypted += cipher.final('hex');
-    return encrypted;
+    return iv.toString('hex') + encrypted;
 };
 
 // Function to decode room ID
 const decodeRoomId = (encodedId) => {
     try {
-        const decipher = crypto.createDecipher('aes192', SECRET_KEY);
-        let decrypted = decipher.update(encodedId, 'hex', 'utf8');
+        const ivHex = encodedId.slice(0, IV_LENGTH * 2);
+        const encrypted = encodedId.slice(IV_LENGTH * 2);
+        const iv = Buffer.from(ivHex, 'hex');
+        const decipher = crypto.createDecipheriv('aes-192-cbc', KEY, iv);
+        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
         decrypted += decipher.final('utf8');
         return decrypted;
     } catch (error) {
@@ -483,7 +488,7 @@ const getRoomById = async (req, res) => {
         const room = await RoomModel.findById(actualRoomId)
             .populate({
                 path: 'user_id',
-                select: 'firstname lastname email phoneNumber'
+                select: 'firstname lastname email'
             });
 
         if (!room) {
@@ -531,7 +536,7 @@ const getCurrentUserRoom = async (req, res) => {
         const room = await RoomModel.findOne({ user_id: req.user._id })
             .populate({
                 path: 'user_id',
-                select: 'firstname lastname email phoneNumber'
+                select: 'firstname lastname email'
             });
 
         if (!room) {
@@ -587,9 +592,15 @@ const incrementCurrentUserOccupants = async (req, res) => {
 
 const decrementCurrentUserOccupants = async (req, res) => {
     try {
+        const { occupantId } = req.body;
+
+        const update = occupantId
+            ? { $inc: { currentOccupants: -1 }, $pull: { occupants: occupantId } }
+            : { $inc: { currentOccupants: -1 } };
+
         const updatedRoom = await RoomModel.findOneAndUpdate(
             { user_id: req.user._id }, // Find by user ID instead of room ID
-            { $inc: { currentOccupants: -1 } },
+            update,
             { new: true }
         );
 
@@ -633,8 +644,43 @@ const archiveCurrentUserRoom = async (req, res) => {
     }
 };
 
+// Tells the chat UI what button to show for a given other user: propose,
+// pending (sent or received), already-binome, or nothing (no room owned).
+const getBinomeStatus = async (req, res) => {
+    try {
+        const currentUserId = req.user._id;
+        const { otherUserId } = req.params;
+        const NotificationModel = require('../models/Notification.model');
+
+        const room = await RoomModel.findOne({ user_id: currentUserId });
+        const ownsRoom = !!room;
+        const alreadyBinome = ownsRoom
+            ? room.occupants.some((id) => id.toString() === otherUserId)
+            : false;
+        const roomFull = ownsRoom
+            ? room.occupants.length >= room.nombreDeColocation
+            : false;
+
+        const [sentProposal, receivedProposal] = await Promise.all([
+            NotificationModel.findOne({ sender: currentUserId, receiver: otherUserId, type: 'binome', status: 'pending' }),
+            NotificationModel.findOne({ sender: otherUserId, receiver: currentUserId, type: 'binome', status: 'pending' })
+        ]);
+
+        res.json({
+            ownsRoom,
+            alreadyBinome,
+            roomFull,
+            pendingProposalSent: !!sentProposal,
+            pendingProposalReceived: !!receivedProposal,
+            pendingProposalReceivedId: receivedProposal ? receivedProposal._id : null
+        });
+    } catch (error) {
+        console.error('Error getting binome status:', error);
+        res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    }
+};
+
 
 module.exports = { getRoombyUserId, CreateRoom, updateRoom, deleteRoom, getAllRooms, filter, search,
     usersWithRoom,incrementOccupants,decrementOccupants,archiveRoom,getRoomById,encodeRoomId,decodeRoomId,
-archiveCurrentUserRoom,decrementCurrentUserOccupants ,incrementCurrentUserOccupants,getCurrentUserRoom}
-    
+archiveCurrentUserRoom,decrementCurrentUserOccupants ,incrementCurrentUserOccupants,getCurrentUserRoom,getBinomeStatus}
