@@ -5,11 +5,16 @@
     "main": "server.js",
     "scripts": {
         "test": "echo \"Error: no test specified\" && exit 1",
-        "dev": "nodemon server.js"
+        "dev": "nodemon server.js",
+        "start:pm2": "pm2 start ecosystem.config.js",
+        "stop:pm2": "pm2 stop ecosystem.config.js",
+        "restart:pm2": "pm2 restart ecosystem.config.js",
+        "logs:pm2": "pm2 logs binomy-backend"
     },
     "author": "",
     "license": "ISC",
     "dependencies": {
+        "@socket.io/redis-adapter": "^8.3.0",
         "axios": "^1.9.0",
         "bcryptjs": "^2.4.3",
         "connect-multiparty": "^2.2.0",
@@ -25,10 +30,14 @@
         "nodejs_website": "file:",
         "nodemailer": "^6.9.16",
         "nodemon": "^3.1.7",
+        "redis": "^6.3.0",
         "sharp": "^0.35.5",
         "socket.io": "^4.8.1",
         "socket.io-client": "^4.8.1",
         "uuid": "^11.0.3",
         "web-push": "^3.6.7"
+    },
+    "devDependencies": {
+        "pm2": "^7.0.4"
     }
 }
