@@ -1,5 +1,8 @@
 const RoomModel = require("../models/Room.model")
 const UserModel = require("../models/User.model")
+const { API_BASE_URL } = require("../utils/apiBaseUrl");
+const { deleteUploadedFiles } = require("../utils/deleteUploadedFile");
+const { compressImage } = require("../utils/compressImage");
 //const { decodeRoomId } = require("../utils/hashids");
 const crypto = require('crypto');
 // Secret key for encoding/decoding (store this in environment variables in production)
@@ -52,20 +55,37 @@ const getRoombyUserId = async(req, res) => {
 
 const getAllRooms = async (req, res) => {
     try {
-        let RoomsList = await RoomModel.find();
+        // Unbounded before: RoomModel.find() with no limit pulled the entire
+        // collection into memory on every call. Paginated the same way as the
+        // rest of the app's list endpoints so this stays cheap as listings grow.
+        const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+        const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+        const skip = (page - 1) * limit;
+
+        const [RoomsList, total] = await Promise.all([
+            RoomModel.find().sort({ _id: -1 }).skip(skip).limit(limit),
+            RoomModel.countDocuments()
+        ]);
 
         // Convert the rooms data and encode IDs
-        RoomsList = RoomsList.map(room => ({
+        const data = RoomsList.map(room => ({
             ...room._doc,
             _id: encodeRoomId(room._id), // Encode the ID
-            photos: room.photos.map(photo => `http://localhost:3003/${photo.path.replace("\\", "/")}`),
+            photos: room.photos.map(photo => `${API_BASE_URL}/${photo.path.replace("\\", "/")}`),
             Equipement: room.Equipement.map(equip => ({
                 ...equip,
-                path: `http://localhost:3003/${equip.path.replace("\\", "/")}`
+                path: `${API_BASE_URL}/${equip.path.replace("\\", "/")}`
             }))
         }));
 
-        res.send(RoomsList);
+        res.send({
+            success: true,
+            data,
+            page,
+            limit,
+            total,
+            hasMore: skip + data.length < total
+        });
     } catch (err) {
         res.status(500).send({ message: 'Error retrieving rooms', error: err.message });
     }
@@ -75,6 +95,19 @@ const getAllRooms = async (req, res) => {
 
 const CreateRoom = async (req, res) => {
     try {
+        // One housing situation at a time: block if the user already owns an
+        // active room, or is already someone else's occupant (binôme) — in
+        // either case a new listing would be meaningless/inconsistent.
+        const existingOwnRoom = await RoomModel.findOne({ user_id: req.user._id });
+        if (existingOwnRoom) {
+            return res.status(409).json({ message: 'Vous avez déjà un logement actif.' });
+        }
+
+        const occupiedRoom = await RoomModel.findOne({ occupants: req.user._id });
+        if (occupiedRoom) {
+            return res.status(409).json({ message: 'Vous êtes déjà le binôme de quelqu\'un — vous ne pouvez pas ajouter de logement tant que vous êtes colocataire.' });
+        }
+
         // Manual validation before creating the room
         const validationErrors = [];
         
@@ -162,19 +195,14 @@ const CreateRoom = async (req, res) => {
         
         // Handle photos
         if (req.files && req.files.photos) {
-            // Check if photos is an array or a single file
-            if (Array.isArray(req.files.photos)) {
-                Room.photos = req.files.photos.map(photo => ({
-                    path: photo.path.replace("\\", "/"), // Normalize the path
-                    name: photo.filename || photo.originalname
-                }));
-            } else {
-                // Handle single file case
-                Room.photos = [{
-                    path: req.files.photos.path.replace("\\", "/"),
-                    name: req.files.photos.filename || req.files.photos.originalname
-                }];
-            }
+            const uploadedPhotos = Array.isArray(req.files.photos) ? req.files.photos : [req.files.photos];
+
+            // A compression failure on one photo shouldn't block the whole
+            // listing — fall back to that photo's raw upload.
+            Room.photos = await Promise.all(uploadedPhotos.map(async (photo) => ({
+                path: (await compressImage(photo.path).catch(() => photo.path)).replace("\\", "/"),
+                name: photo.filename || photo.originalname
+            })));
         }
         
         // Parse the equipment data sent from frontend
@@ -336,7 +364,7 @@ const updateRoom = async (req, res) => {
                 console.log("Photos to keep:", keepPhotoUrls);
                 
                 const existingPhotosToKeep = existingRoom.photos.filter(photo => {
-                    const photoUrl = `http://localhost:3003/${photo.path.replace("\\", "/")}`;
+                    const photoUrl = `${API_BASE_URL}/${photo.path.replace("\\", "/")}`;
                     return keepPhotoUrls.includes(photoUrl) || keepPhotoUrls.includes(photo.path);
                 });
                 
@@ -351,14 +379,16 @@ const updateRoom = async (req, res) => {
 
         // Case 2: Add any new photos
         if (req.files && req.files.photos) {
-            const newPhotos = Array.isArray(req.files.photos) 
-                ? req.files.photos 
+            const newPhotos = Array.isArray(req.files.photos)
+                ? req.files.photos
                 : [req.files.photos];
 
-            const newPhotoObjects = newPhotos.map(photo => ({
-                path: photo.path.replace("\\", "/"),
+            // A compression failure on one photo shouldn't block the update
+            // — fall back to that photo's raw upload.
+            const newPhotoObjects = await Promise.all(newPhotos.map(async (photo) => ({
+                path: (await compressImage(photo.path).catch(() => photo.path)).replace("\\", "/"),
                 name: photo.filename || photo.originalname
-            }));
+            })));
 
             updateData.photos = [...updateData.photos, ...newPhotoObjects];
             console.log("Added new photos:", newPhotoObjects);
@@ -366,12 +396,20 @@ const updateRoom = async (req, res) => {
 
         delete updateData.keepPhotos;
 
+        // Any existing photo not carried over into the final list was
+        // dropped by this update — its file would otherwise sit on disk
+        // forever with nothing left pointing to it.
+        const keptPaths = new Set(updateData.photos.map(photo => photo.path));
+        const removedPhotos = existingRoom.photos.filter(photo => !keptPaths.has(photo.path));
+
         // Update the room using the actual (decoded) room ID
         const result = await RoomModel.findByIdAndUpdate(
             actualRoomId,
             updateData,
             { new: true, runValidators: true }
         );
+
+        deleteUploadedFiles(removedPhotos);
 
         res.send(result);
     } catch (err) {
@@ -396,12 +434,23 @@ const deleteRoom = async (req, res) => {
     try {
         // Decode the room ID first
         const actualRoomId = decodeRoomId(req.params.id);
+        const userId = req.user._id.toString();
 
-        const deletedRoom = await RoomModel.findByIdAndDelete(actualRoomId);
-
-        if (!deletedRoom) {
+        const room = await RoomModel.findById(actualRoomId);
+        if (!room) {
             return res.status(404).json({ message: 'Room not found' });
         }
+
+        // Either the current owner (active room) or the last owner (an
+        // already-archived room, which has no user_id anymore) may delete it.
+        const isOwner = room.user_id?.toString() === userId;
+        const isLastOwner = room.lastOwner?.toString() === userId;
+        if (!isOwner && !isLastOwner) {
+            return res.status(403).json({ message: 'Not authorized to delete this room' });
+        }
+
+        await RoomModel.findByIdAndDelete(actualRoomId);
+        deleteUploadedFiles(room.photos);
 
         res.status(200).json({ message: 'Room deleted successfully' });
     } catch (err) {
@@ -416,20 +465,23 @@ const archiveRoom = async (req, res) => {
     try {
         // Decode the room ID first
         const actualRoomId = decodeRoomId(req.params.id);
-        
-        console.log('req.user:', req.user);
-        const userId = req.user?._id;
+        const userId = req.user._id.toString();
+
+        const room = await RoomModel.findById(actualRoomId);
+        if (!room) return res.status(404).send({ message: "Room not found" });
+
+        if (room.user_id?.toString() !== userId) {
+            return res.status(403).send({ message: 'Not authorized to archive this room' });
+        }
 
         const result = await RoomModel.findByIdAndUpdate(
             actualRoomId, // Use decoded ID
             {
                 $unset: { user_id: "" },
-                $set: { lastOwner: userId || null }
+                $set: { lastOwner: userId }
             },
             { new: true }
         );
-
-        if (!result) return res.status(404).send({ message: "Room not found" });
 
         res.send({ message: "Room archived", room: result });
     } catch (error) {
@@ -438,6 +490,51 @@ const archiveRoom = async (req, res) => {
         }
         console.error('Archive error:', error);
         res.status(500).send({ error: "Failed to archive room" });
+    }
+};
+
+// A previously-archived room (user_id unset, lastOwner still pointing at the
+// original owner) can be brought back — but only by that same owner, and
+// only if they don't already have another active room (the app assumes one
+// active listing per user everywhere else). Comes back empty: any prior
+// occupants are cleared, since reactivating means starting the search over,
+// not resuming the old colocation.
+const reactivateRoom = async (req, res) => {
+    try {
+        const actualRoomId = decodeRoomId(req.params.id);
+        const userId = req.user._id.toString();
+
+        const room = await RoomModel.findById(actualRoomId);
+        if (!room) return res.status(404).send({ message: 'Room not found' });
+
+        if (room.user_id) {
+            return res.status(409).send({ message: 'Ce logement est déjà actif' });
+        }
+
+        if (room.lastOwner?.toString() !== userId) {
+            return res.status(403).send({ message: 'Not authorized to reactivate this room' });
+        }
+
+        const activeRoom = await RoomModel.findOne({ user_id: userId });
+        if (activeRoom) {
+            return res.status(409).send({ message: 'Vous avez déjà un logement actif. Archivez-le avant d\'en réactiver un autre.' });
+        }
+
+        const result = await RoomModel.findByIdAndUpdate(
+            actualRoomId,
+            {
+                $set: { user_id: userId, currentOccupants: 0, occupants: [] }
+            },
+            { new: true }
+        );
+
+        res.send({ message: 'Logement réactivé', room: result });
+    } catch (error) {
+        if (error.message === 'Invalid room ID') {
+            return res.status(400).send({ message: 'Invalid room ID format' });
+        }
+        console.error('Reactivate error:', error);
+        res.status(500).send({ error: 'Failed to reactivate room' });
     }
 };
 
@@ -488,7 +585,11 @@ const getRoomById = async (req, res) => {
         const room = await RoomModel.findById(actualRoomId)
             .populate({
                 path: 'user_id',
-                select: 'firstname lastname email'
+                select: 'firstname lastname'
+            })
+            .populate({
+                path: 'occupants',
+                select: 'firstname lastname'
             });
 
         if (!room) {
@@ -498,12 +599,12 @@ const getRoomById = async (req, res) => {
         // Convert Equipement paths to full URLs
         const equipementList = room.Equipement.map(equip => ({
             ...equip.toObject(),
-            path: equip.path ? `http://localhost:3003/${equip.path.replace("\\", "/")}` : null
+            path: equip.path ? `${API_BASE_URL}/${equip.path.replace("\\", "/")}` : null
         }));
 
         // Convert photos paths to full URLs
         const photoList = room.photos.map(photo =>
-            photo.path ? `http://localhost:3003/${photo.path.replace("\\", "/")}` : null
+            photo.path ? `${API_BASE_URL}/${photo.path.replace("\\", "/")}` : null
         );
 
         res.status(200).json({
@@ -546,12 +647,12 @@ const getCurrentUserRoom = async (req, res) => {
         // Convert Equipement paths to full URLs
         const equipementList = room.Equipement.map(equip => ({
             ...equip.toObject(),
-            path: equip.path ? `http://localhost:3003/${equip.path.replace("\\", "/")}` : null
+            path: equip.path ? `${API_BASE_URL}/${equip.path.replace("\\", "/")}` : null
         }));
 
         // Convert photos paths to full URLs
         const photoList = room.photos.map(photo =>
-            photo.path ? `http://localhost:3003/${photo.path.replace("\\", "/")}` : null
+            photo.path ? `${API_BASE_URL}/${photo.path.replace("\\", "/")}` : null
         );
 
         res.status(200).json({
@@ -652,7 +753,12 @@ const getBinomeStatus = async (req, res) => {
         const { otherUserId } = req.params;
         const NotificationModel = require('../models/Notification.model');
 
-        const room = await RoomModel.findOne({ user_id: currentUserId });
+        const [room, receiverRoom, sentProposal, receivedProposal] = await Promise.all([
+            RoomModel.findOne({ user_id: currentUserId }),
+            RoomModel.findOne({ user_id: otherUserId }),
+            NotificationModel.findOne({ sender: currentUserId, receiver: otherUserId, type: 'binome', status: 'pending' }),
+            NotificationModel.findOne({ sender: otherUserId, receiver: currentUserId, type: 'binome', status: 'pending' })
+        ]);
         const ownsRoom = !!room;
         const alreadyBinome = ownsRoom
             ? room.occupants.some((id) => id.toString() === otherUserId)
@@ -661,15 +767,11 @@ const getBinomeStatus = async (req, res) => {
             ? room.occupants.length >= room.nombreDeColocation
             : false;
 
-        const [sentProposal, receivedProposal] = await Promise.all([
-            NotificationModel.findOne({ sender: currentUserId, receiver: otherUserId, type: 'binome', status: 'pending' }),
-            NotificationModel.findOne({ sender: otherUserId, receiver: currentUserId, type: 'binome', status: 'pending' })
-        ]);
-
         res.json({
             ownsRoom,
             alreadyBinome,
             roomFull,
+            receiverOwnsRoom: !!receiverRoom,
             pendingProposalSent: !!sentProposal,
             pendingProposalReceived: !!receivedProposal,
             pendingProposalReceivedId: receivedProposal ? receivedProposal._id : null
@@ -682,5 +784,5 @@ const getBinomeStatus = async (req, res) => {
 
 
 module.exports = { getRoombyUserId, CreateRoom, updateRoom, deleteRoom, getAllRooms, filter, search,
-    usersWithRoom,incrementOccupants,decrementOccupants,archiveRoom,getRoomById,encodeRoomId,decodeRoomId,
+    usersWithRoom,incrementOccupants,decrementOccupants,archiveRoom,reactivateRoom,getRoomById,encodeRoomId,decodeRoomId,
 archiveCurrentUserRoom,decrementCurrentUserOccupants ,incrementCurrentUserOccupants,getCurrentUserRoom,getBinomeStatus}

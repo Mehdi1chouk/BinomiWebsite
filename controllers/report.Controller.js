@@ -6,7 +6,9 @@ const jwt = require('jsonwebtoken');
 
 exports.reportUser = async (req, res) => {
     try {
-        const { reportedUserId, reason } = req.body;
+        const { reportedUserId, reason, category } = req.body;
+        const validCategories = ['harassment', 'fake-profile', 'inappropriate-photo', 'scam', 'spam', 'other'];
+        const reportCategory = validCategories.includes(category) ? category : 'other';
         
         // Get reporter ID from token
         const token = req.headers.authorization?.split(' ')[1];
@@ -41,7 +43,8 @@ exports.reportUser = async (req, res) => {
         const newReport = new ReportModel({
             reporterId,
             reportedUserId,
-            reason: reason.trim()
+            reason: reason.trim(),
+            category: reportCategory
         });
 
         await newReport.save();

@@ -1,10 +1,102 @@
 const UserModel = require('../models/User.model');
 const RoomModel = require('../models/Room.model')
 const { encodeRoomId } = require("../utils/hashids");
+const { API_BASE_URL } = require('../utils/apiBaseUrl');
+const { deleteUploadedFile } = require('../utils/deleteUploadedFile');
+const { compressImage } = require('../utils/compressImage');
+const jwt = require('jsonwebtoken');
 
 let UsersList = [];
 const fs = require('fs');
 const path = require('path');
+
+const resolvePhotoUrl = (photo) => (photo ? `${API_BASE_URL}/${photo.replace(/\\/g, '/')}` : null);
+
+// A user can be linked to a room either as its owner (user_id) or as
+// someone who accepted a 'binome' proposal into it (occupants[]) — both
+// cases need to resolve to the same room/co-occupants info so the browse
+// list and its "en colocation avec X" indicator work the same for either
+// role. The indicator (and its co-occupant list) only shows while the room
+// still has open spots: once full there's no one left to recruit.
+const EMPTY_ROOM_INFO = { roomId: null, coOccupants: [], roomSpotsLeft: null };
+
+const getUserRoomInfo = async (userId) => {
+    const room = await RoomModel.findOne({
+        $or: [{ user_id: userId }, { occupants: userId }]
+    })
+        .select('user_id occupants nombreDeColocation')
+        .populate('user_id', 'firstname lastname photo')
+        .populate('occupants', 'firstname lastname photo');
+
+    if (!room) {
+        return EMPTY_ROOM_INFO;
+    }
+
+    const isFull = room.occupants.length >= room.nombreDeColocation;
+    let coOccupants = [];
+    if (!isFull && room.occupants.length > 0) {
+        const members = room.user_id ? [room.user_id, ...room.occupants] : [...room.occupants];
+        coOccupants = members
+            .filter((member) => member._id.toString() !== userId.toString())
+            .map((member) => ({
+                _id: member._id,
+                firstname: member.firstname,
+                lastname: member.lastname,
+                photo: resolvePhotoUrl(member.photo)
+            }));
+    }
+
+    return {
+        roomId: room._id,
+        coOccupants,
+        roomSpotsLeft: Math.max(room.nombreDeColocation - room.occupants.length, 0)
+    };
+};
+
+// Bulk version of getUserRoomInfo: one query for every user in the list
+// instead of one query per user. Browse/filter lists can run into the
+// thousands, and firing a DB round-trip per row for room info doesn't scale
+// — this fetches every relevant room in a single query and derives each
+// user's info from an in-memory map instead.
+const getRoomInfoMapForUsers = async (userIds) => {
+    const ids = userIds.map((id) => id.toString());
+    const rooms = await RoomModel.find({
+        $or: [{ user_id: { $in: ids } }, { occupants: { $in: ids } }]
+    })
+        .select('user_id occupants nombreDeColocation')
+        .populate('user_id', 'firstname lastname photo')
+        .populate('occupants', 'firstname lastname photo')
+        .lean();
+
+    const map = new Map();
+    for (const room of rooms) {
+        const isFull = room.occupants.length >= room.nombreDeColocation;
+        const members = room.user_id ? [room.user_id, ...room.occupants] : [...room.occupants];
+        const linkedIds = new Set(members.map((member) => member._id.toString()));
+
+        for (const memberId of linkedIds) {
+            let coOccupants = [];
+            if (!isFull && room.occupants.length > 0) {
+                coOccupants = members
+                    .filter((member) => member._id.toString() !== memberId)
+                    .map((member) => ({
+                        _id: member._id,
+                        firstname: member.firstname,
+                        lastname: member.lastname,
+                        photo: resolvePhotoUrl(member.photo)
+                    }));
+            }
+
+            map.set(memberId, {
+                roomId: room._id,
+                coOccupants,
+                roomSpotsLeft: Math.max(room.nombreDeColocation - room.occupants.length, 0)
+            });
+        }
+    }
+
+    return map;
+};
 
 
 
@@ -23,16 +115,12 @@ const getAll = async (req, res) => {
       }
 
       const usersList = await UserModel.find(query).lean();
-      
-      // Fetch rooms for each user
-      const usersWithRooms = await Promise.all(usersList.map(async (user) => {
-        const room = await RoomModel.findOne({ user_id: user._id }).select('_id');
-        
-        return {
-          ...user,
-          photo: user.photo ? `http://localhost:3003/${user.photo.replace("\\", "/")}` : null,
-          roomId: room ? room._id : null // This is safe since it's only for frontend
-        };
+
+      const roomInfoMap = await getRoomInfoMapForUsers(usersList.map((user) => user._id));
+      const usersWithRooms = usersList.map((user) => ({
+        ...user,
+        photo: resolvePhotoUrl(user.photo),
+        ...(roomInfoMap.get(user._id.toString()) ?? EMPTY_ROOM_INFO)
       }));
   
       res.status(200).json({
@@ -87,7 +175,9 @@ const updateUser = async (req, res) => {
             // Save new image path — the previous face verification (if any)
             // was tied to the OLD photo, so it no longer proves anything
             // about this one.
-            updatedData.photo = req.files.photo.path;
+            // A failed compression (e.g. an unsupported format) shouldn't
+            // block the profile update — fall back to the raw upload.
+            updatedData.photo = await compressImage(req.files.photo.path, { maxDimension: 800 }).catch(() => req.files.photo.path);
             updatedData.isVerified = false;
         } else {
             // If no new photo, remove photo from updatedData to keep the existing one
@@ -135,24 +225,42 @@ const getUserById = async (req, res) => {
 
         // Format photo URL
         if (user.photo) {
-            user.photo = `http://localhost:3003/${user.photo.replace(/\\/g, "/")}`;
+            user.photo = `${API_BASE_URL}/${user.photo.replace(/\\/g, "/")}`;
         }
 
         // Find Room by User ID
         const room = await RoomModel.findOne({ user_id: req.params.id })
-                                    .select('type etat region price user_id') // Select the fields you need
+                                    .select('type etat region ville price user_id nombreDeColocation currentOccupants')
                                     .lean();
 
 
 
 
         const archivedRooms = await RoomModel.find({ user_id: null, lastOwner: req.params.id })  //new
-        .select('type region price') // You can add other fields if needed                        //new
+        .select('type region ville price nombreDeColocation currentOccupants')                    //new
         .lean();                                                                                 //new
 
 
+        // Is this person already someone else's occupant (binôme)? Relevant
+        // only when viewing your own profile — it's what gates whether
+        // "Ajouter un logement" makes sense (a second household would be
+        // meaningless while you're already housed as a binôme).
+        let binomeOwner = null;
+        if (isSelf && !room) {
+            const occupiedRoom = await RoomModel.findOne({ occupants: req.params.id })
+                .populate({ path: 'user_id', select: 'firstname lastname' })
+                .lean();
+            if (occupiedRoom?.user_id) {
+                binomeOwner = {
+                    firstname: occupiedRoom.user_id.firstname,
+                    lastname: occupiedRoom.user_id.lastname
+                };
+            }
+        }
+
         user.room = room || null; // Add the room data to the user object
          user.archivedRooms = archivedRooms;                                                   //new
+        user.binomeOwner = binomeOwner;
 
         res.status(200).json({
             success: true,
@@ -227,25 +335,25 @@ const filterUser = async (req, res) => {
 
     // Apply room-based filters and transform photo URLs
     const applyRoomFilters = async (users) => {
-      return Promise.all(users.map(async user => {
-        const room = await RoomModel.findOne({ user_id: user._id });
-        
-        const transformedUser = {
-          ...user.toObject(), // Convert Mongoose document to plain JavaScript object
-          photo: user.photo ? `http://localhost:3003/${user.photo.replace("\\", "/")}` : null,
-          roomId: room ? room._id : null
-        };
-        
-        return transformedUser;
+      const roomInfoMap = await getRoomInfoMapForUsers(users.map(user => user._id));
+      return users.map(user => ({
+        ...user.toObject(), // Convert Mongoose document to plain JavaScript object
+        photo: resolvePhotoUrl(user.photo),
+        ...(roomInfoMap.get(user._id.toString()) ?? EMPTY_ROOM_INFO)
       }));
     };
-    
+
+    // One query for every candidate's own room instead of one query per user.
+    const getOwnRoomMap = async (users) => {
+      const rooms = await RoomModel.find({ user_id: { $in: users.map(user => user._id) } })
+        .select('user_id')
+        .lean();
+      return new Map(rooms.map(room => [room.user_id.toString(), room]));
+    };
+
     const filterByRoom = async (users, hasRoom) => {
-      const promises = users.map(async user => {
-        const room = await RoomModel.findOne({ user_id: user._id });
-        return (!!room === hasRoom) ? user : null;
-      });
-      return (await Promise.all(promises)).filter(Boolean);
+      const ownRoomMap = await getOwnRoomMap(users);
+      return users.filter(user => ownRoomMap.has(user._id.toString()) === hasRoom);
     };
 
     // Apply search type filters
@@ -254,19 +362,19 @@ const filterUser = async (req, res) => {
     } else if (searchType === "coloc-avec-chambre") {
       filteredUsers = await filterByRoom(filteredUsers, true);
     }
-    
+
     // Move-in Date filter
     if (moveInDate && (searchType === "coloc-avec-chambre" || searchType === "les-deux")) {
       const rooms = await RoomModel.find({
         disponibilite: { $gte: new Date(moveInDate) }
+      }).select('_id').lean();
+      const roomIds = new Set(rooms.map(room => room._id.toString()));
+
+      const ownRoomMap = await getOwnRoomMap(filteredUsers);
+      filteredUsers = filteredUsers.filter(user => {
+        const room = ownRoomMap.get(user._id.toString());
+        return !room || roomIds.has(room._id.toString());
       });
-      const roomIds = rooms.map(room => room._id.toString());
-      
-      const promises = filteredUsers.map(async user => {
-        const room = await RoomModel.findOne({ user_id: user._id });
-        return !room || roomIds.includes(room._id.toString()) ? user : null;
-      });
-      filteredUsers = (await Promise.all(promises)).filter(Boolean);
     }
 
     // Apply photo transformation to all users
@@ -287,11 +395,26 @@ const filterUser = async (req, res) => {
 
 
 
-const deleteUser = (req, res) => {
-    UserModel.deleteOne({ _id: req.params.id })
-        .then(result => res.send(result))
-        .catch(err => res.status(422).send(err))
+const deleteUser = async (req, res) => {
+    try {
+        // This route had no auth check at all before — anyone could delete
+        // any account by guessing/enumerating an id. Only the account owner
+        // or an admin may delete it now.
+        if (req.user._id.toString() !== req.params.id && req.user.role !== 'admin') {
+            return res.status(403).send({ message: 'Not authorized to delete this account' });
+        }
 
+        const user = await UserModel.findByIdAndDelete(req.params.id);
+        if (!user) {
+            return res.status(404).send({ message: 'User not found' });
+        }
+
+        deleteUploadedFile(user.photo);
+
+        res.send({ message: 'User deleted successfully' });
+    } catch (err) {
+        res.status(422).send(err);
+    }
 }
 
 

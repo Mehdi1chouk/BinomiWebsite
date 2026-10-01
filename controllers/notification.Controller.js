@@ -3,8 +3,10 @@ const UserModel = require("../models/User.model");
 const { getIO } = require('../socketio'); // Import Socket.IO instance
 const ChatModel = require('../models/Chat.model');
 const RoomModel = require('../models/Room.model');
+const { API_BASE_URL } = require('../utils/apiBaseUrl');
+const { sendPushToUser } = require('../utils/sendPushNotification');
 
-const resolvePhotoUrl = (photo) => (photo ? `http://localhost:3003/${photo.replace(/\\/g, '/')}` : null);
+const resolvePhotoUrl = (photo) => (photo ? `${API_BASE_URL}/${photo.replace(/\\/g, '/')}` : null);
 
 // const sendNotification = async(req, res) => {
 //     try {
@@ -159,9 +161,15 @@ const sendNotification = async (req, res) => {
       status: notification.status
     });
 
-    res.status(200).json({ 
+    sendPushToUser(receiverId, {
+      title: `${senderPayload.firstname} vous a envoyé un message`,
+      body: message,
+      url: '/app/notifications'
+    }).catch(() => {});
+
+    res.status(200).json({
       message: 'Notification sent successfully',
-      notification 
+      notification
     });
 
   } catch (error) {
@@ -184,10 +192,11 @@ const proposeBinome = async (req, res) => {
       return res.status(400).json({ message: 'receiverId est requis' });
     }
 
-    const [sender, receiver, room] = await Promise.all([
+    const [sender, receiver, room, receiverRoom] = await Promise.all([
       UserModel.findById(senderId),
       UserModel.findById(receiverId),
-      RoomModel.findOne({ user_id: senderId })
+      RoomModel.findOne({ user_id: senderId }),
+      RoomModel.findOne({ user_id: receiverId })
     ]);
 
     if (!sender || !receiver) {
@@ -196,6 +205,15 @@ const proposeBinome = async (req, res) => {
 
     if (!room) {
       return res.status(400).json({ message: "Vous devez avoir un logement actif pour proposer un binôme" });
+    }
+
+    // The app doesn't merge two households into one — if the other person
+    // already has their own active house, one of you needs to archive yours
+    // first (from the Archive section) before a binôme proposal makes sense.
+    if (receiverRoom) {
+      return res.status(409).json({
+        message: 'Cette personne a déjà son propre logement actif. Elle doit archiver son logement (ou vous le vôtre) avant de proposer un binôme.'
+      });
     }
 
     const isAlreadyOccupant = room.occupants.some((id) => id.toString() === receiverId);
@@ -244,6 +262,12 @@ const proposeBinome = async (req, res) => {
       status: notification.status,
       type: notification.type
     });
+
+    sendPushToUser(receiverId, {
+      title: 'Proposition de binôme',
+      body: notification.message,
+      url: '/app/notifications'
+    }).catch(() => {});
 
     res.status(200).json({ message: 'Proposition envoyée', notification });
   } catch (error) {
@@ -357,13 +381,24 @@ const acceptNotification = async (req, res) => {
       }
 
       const isAlreadyOccupant = room.occupants.some((id) => id.toString() === userId.toString());
+      let willBeFull = false;
       if (!isAlreadyOccupant) {
         if (room.occupants.length >= room.nombreDeColocation) {
           return res.status(409).json({ message: 'Cette colocation est déjà complète' });
         }
 
+        // The accepter must not already own their own active house — the app
+        // doesn't reconcile two households into one, so they have to archive
+        // their own listing first (see room.Controller's archiveCurrentUserRoom).
+        const ownRoom = await RoomModel.findOne({ user_id: userId });
+        if (ownRoom) {
+          return res.status(409).json({
+            message: 'Vous avez déjà un logement actif. Archivez-le avant de rejoindre une autre colocation.'
+          });
+        }
+
         const newOccupantCount = room.occupants.length + 1;
-        const willBeFull = newOccupantCount >= room.nombreDeColocation;
+        willBeFull = newOccupantCount >= room.nombreDeColocation;
 
         // Targeted update instead of fetch+save: save() re-validates the whole
         // document, including unrelated legacy fields that may predate current
@@ -376,6 +411,36 @@ const acceptNotification = async (req, res) => {
           },
           ...(willBeFull ? { $unset: { user_id: '' } } : {})
         });
+
+        // The room's owner isn't part of this request/response cycle, so the
+        // only way they learn their listing just got archived is a
+        // notification — same reasoning as the binome-accepted one below.
+        if (willBeFull && room.user_id) {
+          const archiveNotification = new NotificationModel({
+            sender: userId,
+            receiver: room.user_id,
+            message: 'Votre colocation est complète ! Votre logement a été archivé automatiquement.',
+            type: 'house-archived',
+            status: 'accepted'
+          });
+          await archiveNotification.save();
+
+          const io = getIO();
+          io.to(room.user_id.toString()).emit('receive_notification', {
+            _id: archiveNotification._id,
+            sender: { _id: userId },
+            receiverId: room.user_id,
+            message: archiveNotification.message,
+            createdAt: archiveNotification.createdAt,
+            type: 'house-archived'
+          });
+
+          sendPushToUser(room.user_id, {
+            title: 'Colocation complète',
+            body: archiveNotification.message,
+            url: '/app/notifications'
+          }).catch(() => {});
+        }
       }
 
       notification.isRead = true;
@@ -405,10 +470,17 @@ const acceptNotification = async (req, res) => {
         type: 'binome-accepted'
       });
 
+      sendPushToUser(notification.sender, {
+        title: 'Proposition acceptée',
+        body: confirmationNotification.message,
+        url: '/app/notifications'
+      }).catch(() => {});
+
       return res.status(200).json({
         message: 'Vous êtes maintenant binômes !',
         notification,
-        becameBinome: true
+        becameBinome: true,
+        roomNowFull: willBeFull
       });
     }
 
@@ -432,9 +504,38 @@ const acceptNotification = async (req, res) => {
         receiver: notification.sender,
         message: "Hello! I've accepted your contact request."
       });
-      
+
       await conversation.save();
     }
+
+    // Let the original sender know their contact request was accepted — same
+    // reasoning as the binome-accepted notification above: they have no
+    // other way of finding out.
+    const accepterUser = await UserModel.findById(userId).select('firstname photo');
+    const contactAcceptedNotification = new NotificationModel({
+      sender: userId,
+      receiver: notification.sender,
+      message: `${accepterUser?.firstname ?? 'Cette personne'} a accepté votre demande de contact !`,
+      type: 'contact-accepted',
+      status: 'accepted'
+    });
+    await contactAcceptedNotification.save();
+
+    const ioForContact = getIO();
+    ioForContact.to(notification.sender.toString()).emit('receive_notification', {
+      _id: contactAcceptedNotification._id,
+      sender: { _id: userId, firstname: accepterUser?.firstname, photo: resolvePhotoUrl(accepterUser?.photo) },
+      receiverId: notification.sender,
+      message: contactAcceptedNotification.message,
+      createdAt: contactAcceptedNotification.createdAt,
+      type: 'contact-accepted'
+    });
+
+    sendPushToUser(notification.sender, {
+      title: 'Demande de contact acceptée',
+      body: contactAcceptedNotification.message,
+      url: '/app/notifications'
+    }).catch(() => {});
 
     // Return the conversation for frontend redirect
     res.status(200).json({
@@ -495,6 +596,12 @@ const acceptNotification = async (req, res) => {
           createdAt: rejectionNotification.createdAt,
           type: 'rejected'
         });
+
+        sendPushToUser(notification.sender, {
+          title: 'Demande refusée',
+          body: message,
+          url: '/app/notifications'
+        }).catch(() => {});
       }
 
       // Delete the original pending notification

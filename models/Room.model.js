@@ -209,4 +209,7 @@ const Schema = mongoose.Schema({
     }
 });
 
+Schema.index({ user_id: 1 });
+Schema.index({ occupants: 1 });
+
 module.exports = mongoose.model('Room', Schema);

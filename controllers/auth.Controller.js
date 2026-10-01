@@ -11,6 +11,38 @@ const fs = require('fs');
 const path = require('path');
 let io;
 const BannedEmailModel = require('../models/BannedEmail.model')
+const { compressImage } = require('../utils/compressImage');
+
+// Tokens used to never expire, so a leaked/stolen token stayed valid forever.
+// 7 days bounds a silent, undetected leak — the actual kill-switch for a
+// KNOWN incident (password change, ban) is tokenVersion, which invalidates
+// every existing token immediately regardless of this value.
+const JWT_EXPIRES_IN = '7d';
+
+const EMAIL_VERIFICATION_EXPIRES_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// Fire-and-log, not fire-and-fail: a mail-server hiccup here must never
+// block signup or a resend request, since the account/session already
+// exists independently of whether this email actually goes out.
+const sendVerificationEmail = async (user) => {
+  const token = uuid.v7();
+  user.emailVerificationToken = token;
+  user.emailVerificationExpires = Date.now() + EMAIL_VERIFICATION_EXPIRES_MS;
+  await user.save();
+
+  const mailContent = {
+    from: 'NODE APP',
+    to: user.email,
+    subject: 'Confirmez votre adresse email - Binomy',
+    text: `Bienvenue sur Binomy !\nConfirmez votre adresse email en cliquant sur le lien ci-dessous :\n${process.env.FRONTEND_URL || 'http://localhost:4200'}/auth/verify-email?token=${token}\n\nCe lien expire dans 24 heures.`
+  };
+
+  try {
+    await transporter.sendMail(mailContent);
+  } catch (err) {
+    console.error('Failed to send verification email:', err.message);
+  }
+};
 exports.setSocketIo = (socketIoInstance) => {
     io = socketIoInstance;
 };
@@ -48,7 +80,7 @@ exports.login = async (req, res) => {
       return res.status(422).send({ message: 'Mot de passe incorrect.' });
     }
 
-    const token = jwt.sign({ _id: user._id, role: user.role, tokenVersion: user.tokenVersion }, process.env.SECRET);
+    const token = jwt.sign({ _id: user._id, role: user.role, tokenVersion: user.tokenVersion }, process.env.SECRET, { expiresIn: JWT_EXPIRES_IN });
 
     // Emit socket event
     const io = socketIO.getIO();
@@ -132,9 +164,9 @@ exports.register = async (req, res) => {
     // 6. Validate budget (optional — only checked when provided)
     if (req.body.budget !== undefined && req.body.budget !== '') {
       const budget = parseInt(req.body.budget);
-      if (isNaN(budget) || budget <= 0 || budget > 1000) {
+      if (isNaN(budget) || budget < 50 || budget > 1000) {
         return res.status(400).send({
-          message: 'Le budget doit être entre 1 et 1000'
+          message: 'Le budget doit être entre 50 et 1000'
         });
       }
     }
@@ -164,7 +196,7 @@ exports.register = async (req, res) => {
     }
 
     // 8. Get photo path and validate image via YOLOv5 Flask API
-    const photoPath = req.files.photo.path;
+    let photoPath = req.files.photo.path;
     const form = new FormData();
     form.append('image', fs.createReadStream(photoPath));
 
@@ -181,6 +213,12 @@ exports.register = async (req, res) => {
         message: 'Profile photo not accepted! Try another one.'
       });
     }
+
+    // Compressed only after the liveness check above, which needs the raw
+    // upload — this photo is kept long-term as both the profile picture and
+    // the face-verification anchor, so it's worth shrinking. A compression
+    // failure shouldn't block signup — fall back to the raw upload.
+    photoPath = await compressImage(photoPath, { maxDimension: 800 }).catch(() => photoPath);
 
     // 8. Hash password
     const privatekey = await bcrypt.genSalt(12);
@@ -207,8 +245,13 @@ exports.register = async (req, res) => {
 
     await newUser.save();
 
+    // Signup completes and the user is logged in immediately regardless of
+    // this — email confirmation is a non-blocking nudge, not a gate (see
+    // sendVerificationEmail's own comment for why failures here don't throw).
+    sendVerificationEmail(newUser).catch(() => {});
+
     // 10. Generate token and send response
-    const token = jwt.sign({ _id: newUser._id, role: newUser.role, tokenVersion: newUser.tokenVersion }, process.env.SECRET);
+    const token = jwt.sign({ _id: newUser._id, role: newUser.role, tokenVersion: newUser.tokenVersion }, process.env.SECRET, { expiresIn: JWT_EXPIRES_IN });
 
     res.send({
       firstname: newUser.firstname,
@@ -316,7 +359,7 @@ exports.updatePassword = async (req, res) => {
             if (user) {
                 user.resetKey = uuid.v7()
                 let date = new Date()
-                date.setHours(date.getHours() + 1)
+                date.setMinutes(date.getMinutes() + 20)
                 user.resetTimeout = date.getTime()
                 //console.log(user.resetKey)
 
@@ -324,7 +367,7 @@ exports.updatePassword = async (req, res) => {
                     from: 'NODE APP',
                     to: user.email,
                     subject: 'Reset Password',
-                    text: `You requested a password reset.\nClick the link below to reset your password:\nhttp://localhost:5173/auth/resetpassword?resetKey=${user.resetKey}\n\nIf you did not request this, please ignore this email.`
+                    text: `You requested a password reset.\nClick the link below to reset your password:\n${process.env.FRONTEND_URL || 'http://localhost:4200'}/auth/resetpassword?resetKey=${user.resetKey}\n\nIf you did not request this, please ignore this email.`
 
                     //text: 'reset password : ' + user.resetKey
 
@@ -342,6 +385,46 @@ exports.updatePassword = async (req, res) => {
     } else {
         res.status(444).send({ message: 'missing information !!' })
     }
+};
+
+exports.verifyEmail = async (req, res) => {
+  const { token } = req.body;
+  if (!token) {
+    return res.status(400).send({ message: 'token requis' });
+  }
+
+  try {
+    const user = await UserModel.findOne({ emailVerificationToken: token });
+    if (!user || Date.now() > user.emailVerificationExpires) {
+      return res.status(400).send({ message: 'Lien de confirmation invalide ou expiré.' });
+    }
+
+    user.emailVerified = true;
+    user.emailVerificationToken = undefined;
+    user.emailVerificationExpires = undefined;
+    await user.save();
+
+    res.send({ message: 'Adresse email confirmée avec succès.' });
+  } catch (err) {
+    res.status(500).send({ message: 'Erreur lors de la confirmation', error: err.message });
+  }
+};
+
+exports.resendVerificationEmail = async (req, res) => {
+  try {
+    const user = await UserModel.findById(req.user._id);
+    if (!user) {
+      return res.status(404).send({ message: 'Utilisateur introuvable' });
+    }
+    if (user.emailVerified) {
+      return res.status(409).send({ message: 'Cette adresse email est déjà confirmée.' });
+    }
+
+    await sendVerificationEmail(user);
+    res.send({ message: 'Email de confirmation renvoyé.' });
+  } catch (err) {
+    res.status(500).send({ message: 'Erreur lors de l\'envoi', error: err.message });
+  }
 };
 
   

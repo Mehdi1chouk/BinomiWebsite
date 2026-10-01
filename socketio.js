@@ -4,9 +4,16 @@ let io; // Declare the io instance globally
 
 module.exports = {
     init: (server) => {
+        // Hardcoding the dev URLs here meant real-time chat would silently
+        // stop working the moment this is deployed to an actual domain —
+        // driven by CLIENT_URLS so prod just needs the env var set.
+        const allowedOrigins = (process.env.CLIENT_URLS || "http://localhost:5173,http://localhost:4200")
+            .split(',')
+            .map((origin) => origin.trim());
+
         io = new Server(server, {
             cors: {
-                origin: ["http://localhost:5173", "http://localhost:4200"], // React (Vite) and Angular dev servers
+                origin: allowedOrigins,
                 methods: ["GET", "POST"],
                 allowedHeaders: ["Authorization"],
                 credentials: true

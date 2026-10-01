@@ -9,6 +9,13 @@ const Schema = new mongoose.Schema({
     isRead: { type: Boolean, default: false } // chat status (read/unread)
 });
 
+// Every chat query filters by sender+receiver in one direction or the other
+// (a conversation is unordered), so both directions need their own compound
+// index — without these, every message fetch/conversation list/unread count
+// was a full collection scan.
+Schema.index({ sender: 1, receiver: 1, createdAt: -1 });
+Schema.index({ receiver: 1, sender: 1, createdAt: -1 });
+
 module.exports = mongoose.model('chat', Schema);
 
 
