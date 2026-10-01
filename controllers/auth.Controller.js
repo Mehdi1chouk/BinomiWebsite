@@ -231,6 +231,15 @@ exports.register = async (req, res) => {
     });
 
   } catch (err) {
+    // The check above (line 168) has a race: two signups for the same email
+    // at the exact same moment can both pass it before either one's save()
+    // finishes, so the real guarantee is the unique index on email — a
+    // violation lands here as a MongoDB E11000 error, not caught above. Give
+    // it the same friendly message instead of leaking the raw Mongo error
+    // string (collection/index names) to the client.
+    if (err.code === 11000) {
+      return res.status(422).send({ message: 'User already exists!' });
+    }
     res.status(500).send({
       message: 'Registration failed',
       error: err.message
