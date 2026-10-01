@@ -247,65 +247,13 @@ const CreateRoom = async (req, res) => {
 
 
 
-const incrementOccupants = async (req, res) => {
-    try {
-        // Decode the room ID first
-        const actualRoomId = decodeRoomId(req.params.id);
+// incrementOccupants/decrementOccupants (the `/room/:id/...` routes) were
+// removed: they had no auth check at all, so anyone could inflate or
+// deflate any room's occupant count. The actually-used, properly-guarded
+// equivalents are incrementCurrentUserOccupants/decrementCurrentUserOccupants
+// below, which operate on "the logged-in user's own room" instead of an
+// arbitrary id from the URL.
 
-        const updatedRoom = await RoomModel.findByIdAndUpdate(
-            actualRoomId, // Use decoded ID
-            { $inc: { currentOccupants: 1 } },
-            { new: true }
-        );
-
-        if (!updatedRoom) {
-            return res.status(404).json({ message: 'Room not found' });
-        }
-
-        res.status(200).json(updatedRoom);
-    } catch (err) {
-        if (err.message === 'Invalid room ID') {
-            return res.status(400).json({ message: 'Invalid room ID format' });
-        }
-        console.error('Error incrementing occupants:', err);
-        res.status(500).json({ message: 'Internal server error' });
-    }
-};
-
-
-
-
-
-const decrementOccupants = async (req, res) => {
-    try {
-        // Decode the room ID first
-        const actualRoomId = decodeRoomId(req.params.id);
-
-        const updatedRoom = await RoomModel.findByIdAndUpdate(
-            actualRoomId, // Use decoded ID
-            { $inc: { currentOccupants: -1 } },
-            { new: true }
-        );
-
-        if (!updatedRoom) {
-            return res.status(404).json({ message: 'Room not found' });
-        }
-
-        // Ensure occupants don't go below 0
-        if (updatedRoom.currentOccupants < 0) {
-            updatedRoom.currentOccupants = 0;
-            await updatedRoom.save();
-        }
-
-        res.status(200).json(updatedRoom);
-    } catch (err) {
-        if (err.message === 'Invalid room ID') {
-            return res.status(400).json({ message: 'Invalid room ID format' });
-        }
-        console.error('Error decrementing occupants:', err);
-        res.status(500).json({ message: 'Internal server error' });
-    }
-};
 
 
 const updateRoom = async (req, res) => {
@@ -540,42 +488,11 @@ const reactivateRoom = async (req, res) => {
 
 
 
-const filter = async(req, res) => {
-
-    let Rooms = await RoomModel.find({
-        type: { $regex: 'villa', $options: 'i' }
-    })
-    res.send(Rooms)
-}
-
-
-
-const search = async(req, res) => {
-    let text = req.params.text
-    let Rooms = await RoomModel.find({
-        $or: [
-            /* { price: { $regex: text, $options: 'i' } },*/ // you need to cast the price to string to let it work
-            { region: { $regex: text, $options: 'i' } },
-        ]
-    })
-    let userId = Rooms.map(exp => exp.user_id)
-    let users = await UserModel.find({ _id: { $in: userId } })
-    res.send(users)
-}
-
-const usersWithRoom = async(req, res) => {
-    let users = await UserModel.find().limit();
-
-    let result = []
-    await Promise.all(
-        users.map(async(user) => {
-            let userRoom = await RoomModel.find({ user_id: user._id })
-            result.push({...user._doc, Rooms: userRoom })
-        })
-    )
-    res.send(result)
-
-}
+// filter/search/usersWithRoom (the `/filter`, `/search/:text`, `/userRoom`
+// routes) were removed entirely: none had any auth check, none were called
+// by the frontend, and usersWithRoom/search both sent full raw user
+// documents — including the hashed password field — to anyone, logged in or
+// not. Confirmed live and exploitable before removal.
 
 const getRoomById = async (req, res) => {
     try {
@@ -783,6 +700,6 @@ const getBinomeStatus = async (req, res) => {
 };
 
 
-module.exports = { getRoombyUserId, CreateRoom, updateRoom, deleteRoom, getAllRooms, filter, search,
-    usersWithRoom,incrementOccupants,decrementOccupants,archiveRoom,reactivateRoom,getRoomById,encodeRoomId,decodeRoomId,
+module.exports = { getRoombyUserId, CreateRoom, updateRoom, deleteRoom, getAllRooms,
+    archiveRoom,reactivateRoom,getRoomById,encodeRoomId,decodeRoomId,
 archiveCurrentUserRoom,decrementCurrentUserOccupants ,incrementCurrentUserOccupants,getCurrentUserRoom,getBinomeStatus}

@@ -36,8 +36,7 @@ module.exports = (server) => {
 
 
     //users
-    server.get('/users', verifytoken,UserController.getAll) 
-    server.post('/users', uploadmiddleware, UserController.CreateUser)
+    server.get('/users', verifytoken,UserController.getAll)
     server.put('/users/:id',verifytoken,uploadmiddleware,UserController.updateUser)
     server.delete('/users/:id', verifytoken, UserController.deleteUser)
     server.patch('/users/:id/visibility', verifytoken, UserController.toggleVisibility)
@@ -83,7 +82,7 @@ module.exports = (server) => {
     
 
 
-    server.get('/room/encode/:id', (req, res) => {
+    server.get('/room/encode/:id', verifytoken, (req, res) => {
     try {
         const encodedId = RoomController.encodeRoomId(req.params.id);
         res.json({ encodedId });
@@ -94,14 +93,12 @@ module.exports = (server) => {
 
 
     server.get('/room', verifytoken, RoomController.getRoombyUserId)
-    server.get('/Allrooms', RoomController.getAllRooms)
+    server.get('/Allrooms', verifytoken, RoomController.getAllRooms)
     server.post('/room', verifytoken, uploadroomImages, RoomController.CreateRoom)
     server.put('/room/:id',  verifytoken,uploadroomImages, RoomController.updateRoom)
     server.delete('/room/:id', verifytoken, RoomController.deleteRoom)
     server.get('/room/:id', verifytoken, requireVerified, RoomController.getRoomById);
 
-    server.patch('/room/:id/incrementOccupants', RoomController.incrementOccupants);
-    server.patch('/room/:id/decrementOccupants', RoomController.decrementOccupants);
     server.put("/room/archive/:id",verifytoken,RoomController.archiveRoom);
     server.put('/room/:id/reactivate', verifytoken, RoomController.reactivateRoom);
     //server.get('/room/encoded/:encodedId', RoomController.getRoomByEncodedId);
@@ -117,10 +114,6 @@ module.exports = (server) => {
     server.get('/room/binome-status/:otherUserId', verifytoken, RoomController.getBinomeStatus);
 
 
-
-    server.get('/filter', RoomController.filter)
-    server.get('/search/:text', RoomController.search)
-    server.get('/userRoom', RoomController.usersWithRoom)
 
     //notifications
     // For sending a notification

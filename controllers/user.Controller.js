@@ -114,7 +114,19 @@ const getAll = async (req, res) => {
         query.isVerified = true;
       }
 
-      const usersList = await UserModel.find(query).lean();
+      // Excludes password/resetKey/tokenVersion — this was previously a
+      // plain find() with no projection, sending every user's bcrypt hash
+      // (and active password-reset keys) to every other logged-in user on
+      // the single most frequently-hit endpoint in the app. Confirmed live
+      // before this fix. The 300 cap isn't true pagination (the home feed
+      // still needs the whole matched pool at once for client-side
+      // preference sorting and the swipe carousel) — it's a ceiling so the
+      // query/payload size can't grow without bound as the user base does;
+      // revisit with real pagination if that ever actually gets reached.
+      const usersList = await UserModel.find(query)
+        .select('-password -resetKey -resetTimeout -tokenVersion -__v')
+        .limit(300)
+        .lean();
 
       const roomInfoMap = await getRoomInfoMapForUsers(usersList.map((user) => user._id));
       const usersWithRooms = usersList.map((user) => ({
@@ -137,19 +149,11 @@ const getAll = async (req, res) => {
   };
   
 
-const CreateUser = async(req, res) => {
-
-    try {
-        let user = new UserModel(req.body)
-        if (req.files && req.files.photo) {
-            user.photo = req.files.photo.path
-        }
-        await user.save()
-        res.send(user)
-    } catch (err) {
-        res.status(422).send(err)
-    }
-}
+// CreateUser/`POST /users` was removed entirely rather than fixed: it had no
+// auth, no field whitelist (`new UserModel(req.body)` — anyone could set
+// their own role to 'admin'), and never hashed the password at all. It was
+// never called by the frontend (the real signup flow is /register, which
+// does all of this correctly) — a forgotten duplicate, not a feature.
 
 // Fields a user may edit on their own profile through this route. Anything
 // security-sensitive (role, isVerified, isBanned, tokenVersion, password,
@@ -377,8 +381,13 @@ const filterUser = async (req, res) => {
       if (budgetMax) query.budget.$lte = budgetMax;
     }
 
-    // Fetch users with basic filters
-    let filteredUsers = await UserModel.find(query);
+    // Fetch users with basic filters — same password/resetKey exclusion and
+    // safety cap as getAll above, and for the same reason: this had no
+    // projection at all before, so every filtered-search result included
+    // every matched user's password hash.
+    let filteredUsers = await UserModel.find(query)
+      .select('-password -resetKey -resetTimeout -tokenVersion -__v')
+      .limit(300);
 
     // Apply room-based filters and transform photo URLs
     const applyRoomFilters = async (users) => {
@@ -465,4 +474,4 @@ const deleteUser = async (req, res) => {
 }
 
 
-module.exports = { getAll, CreateUser, updateUser, deleteUser, filterUser, getUserById, toggleVisibility }
+module.exports = { getAll, updateUser, deleteUser, filterUser, getUserById, toggleVisibility }
