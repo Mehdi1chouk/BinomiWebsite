@@ -42,7 +42,7 @@ exports.getReportedUsers = async (req, res) => {
 
     const users = await Promise.all(
       grouped.map(async (entry) => {
-        const user = await UserModel.findById(entry._id).select('firstname lastname email photo isBanned banReason');
+        const user = await UserModel.findById(entry._id).select('firstname lastname email photo gender isBanned banReason');
         if (!user) return null;
         return {
           userId: entry._id,
@@ -50,6 +50,7 @@ exports.getReportedUsers = async (req, res) => {
           lastname: user.lastname,
           email: user.email,
           photo: resolvePhotoUrl(user.photo),
+          gender: user.gender,
           isBanned: user.isBanned,
           banReason: user.banReason,
           reportCount: entry.reportCount,
@@ -193,7 +194,7 @@ exports.unbanUser = async (req, res) => {
 // only way to reach a user was if they'd already been reported.
 exports.searchUsers = async (req, res) => {
   try {
-    const { query, status } = req.query;
+    const { query, status, gender } = req.query;
     const filter = { role: { $ne: 'admin' } };
 
     if (query && query.trim()) {
@@ -205,8 +206,10 @@ exports.searchUsers = async (req, res) => {
     else if (status === 'verified') filter.isVerified = true;
     else if (status === 'unverified') filter.isVerified = { $ne: true };
 
+    if (gender === 'male' || gender === 'female') filter.gender = gender;
+
     const users = await UserModel.find(filter)
-      .select('firstname lastname email photo isBanned isVerified createdAt')
+      .select('firstname lastname email photo gender isBanned isVerified createdAt')
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
@@ -306,8 +309,8 @@ exports.getListings = async (req, res) => {
 
     const rooms = await RoomModel.find(filter)
       .select('type region ville quartier price user_id lastOwner nombreDeColocation currentOccupants createdAt')
-      .populate('user_id', 'firstname lastname email')
-      .populate('lastOwner', 'firstname lastname email')
+      .populate('user_id', 'firstname lastname email gender')
+      .populate('lastOwner', 'firstname lastname email gender')
       .sort({ _id: -1 })
       .limit(100)
       .lean();
@@ -364,6 +367,12 @@ exports.getDashboardStats = async (req, res) => {
       totalReports,
       reportsThisWeek,
       totalMessages,
+      maleTotal,
+      maleVerified,
+      maleBanned,
+      femaleTotal,
+      femaleVerified,
+      femaleBanned,
     ] = await Promise.all([
       UserModel.countDocuments({ role: { $ne: 'admin' } }),
       UserModel.countDocuments({ role: { $ne: 'admin' }, isVerified: true }),
@@ -373,6 +382,12 @@ exports.getDashboardStats = async (req, res) => {
       ReportModel.countDocuments({}),
       ReportModel.countDocuments({ createdAt: { $gte: weekAgo } }),
       ChatModel.countDocuments({}),
+      UserModel.countDocuments({ role: { $ne: 'admin' }, gender: 'male' }),
+      UserModel.countDocuments({ role: { $ne: 'admin' }, gender: 'male', isVerified: true }),
+      UserModel.countDocuments({ role: { $ne: 'admin' }, gender: 'male', isBanned: true }),
+      UserModel.countDocuments({ role: { $ne: 'admin' }, gender: 'female' }),
+      UserModel.countDocuments({ role: { $ne: 'admin' }, gender: 'female', isVerified: true }),
+      UserModel.countDocuments({ role: { $ne: 'admin' }, gender: 'female', isBanned: true }),
     ]);
 
     res.status(200).json({
@@ -387,6 +402,10 @@ exports.getDashboardStats = async (req, res) => {
         totalReports,
         reportsThisWeek,
         totalMessages,
+        genderBreakdown: {
+          male: { total: maleTotal, verified: maleVerified, unverified: maleTotal - maleVerified, banned: maleBanned },
+          female: { total: femaleTotal, verified: femaleVerified, unverified: femaleTotal - femaleVerified, banned: femaleBanned },
+        },
       },
     });
   } catch (error) {
@@ -398,7 +417,7 @@ exports.getDashboardStats = async (req, res) => {
 // instead of the one-by-one flow the reports dashboard uses.
 exports.broadcast = async (req, res) => {
   try {
-    const { message, segment } = req.body;
+    const { message, segment, gender } = req.body;
     if (!message || !message.trim()) {
       return res.status(400).json({ success: false, message: 'Le message est requis' });
     }
@@ -406,6 +425,11 @@ exports.broadcast = async (req, res) => {
     const filter = { role: { $ne: 'admin' }, isBanned: { $ne: true } };
     if (segment === 'verified') filter.isVerified = true;
     else if (segment === 'unverified') filter.isVerified = { $ne: true };
+
+    // Independent of the verified/unverified segment above — the two can be
+    // combined (e.g. "verified" + "female") rather than gender being just
+    // another segment option.
+    if (gender === 'male' || gender === 'female') filter.gender = gender;
 
     const targets = await UserModel.find(filter).select('_id').lean();
     if (targets.length === 0) {
@@ -439,7 +463,8 @@ exports.broadcast = async (req, res) => {
       url: '/app/notifications'
     }).catch(() => {});
 
-    await logAdminAction(req.user._id, 'broadcast', 'broadcast', null, `${segment || 'all'}: ${message.trim()} (${targets.length} destinataires)`);
+    const segmentLabel = [segment || 'all', gender].filter(Boolean).join(' + ');
+    await logAdminAction(req.user._id, 'broadcast', 'broadcast', null, `${segmentLabel}: ${message.trim()} (${targets.length} destinataires)`);
 
     res.status(200).json({ success: true, message: 'Diffusion envoyée', recipientCount: targets.length });
   } catch (error) {
