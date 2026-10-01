@@ -40,6 +40,7 @@ module.exports = (server) => {
     server.post('/users', uploadmiddleware, UserController.CreateUser)
     server.put('/users/:id',verifytoken,uploadmiddleware,UserController.updateUser)
     server.delete('/users/:id', verifytoken, UserController.deleteUser)
+    server.patch('/users/:id/visibility', verifytoken, UserController.toggleVisibility)
     server.post('/users/filter', verifytoken, requireVerified, UserController.filterUser);
     server.get('/users/:id', verifytoken, UserController.getUserById);
 
@@ -74,8 +75,6 @@ module.exports = (server) => {
     server.post('/login', loginLimiter, authController.login)
     server.post('/forgot-password', authFormLimiter, authController.forgotPassword)
     server.post('/reset-password', authFormLimiter, authController.resetPassword)
-    server.post('/verify-email', authFormLimiter, authController.verifyEmail)
-    server.post('/resend-verification-email', verifytoken, authFormLimiter, authController.resendVerificationEmail)
     server.put('/update-password/:userId', verifytoken,authController.updatePassword);
 
 

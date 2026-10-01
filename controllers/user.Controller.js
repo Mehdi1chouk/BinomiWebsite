@@ -109,7 +109,7 @@ const getAll = async (req, res) => {
       // profiles, so a lapsed/unverified account (e.g. after a photo change)
       // drops out of their feed immediately.
       const viewer = await UserModel.findById(req.user._id).select('isVerified');
-      const query = { role: { $ne: 'admin' }, isBanned: { $ne: true } };
+      const query = { role: { $ne: 'admin' }, isBanned: { $ne: true }, isHidden: { $ne: true } };
       if (viewer?.isVerified) {
         query.isVerified = true;
       }
@@ -151,16 +151,35 @@ const CreateUser = async(req, res) => {
     }
 }
 
+// Fields a user may edit on their own profile through this route. Anything
+// security-sensitive (role, isVerified, isBanned, tokenVersion, password,
+// email, isHidden) is deliberately excluded — those have their own
+// dedicated, properly-guarded endpoints (verification/ban via admin routes,
+// password via updatePassword, visibility via toggleVisibility).
+const USER_EDITABLE_FIELDS = ['governorate', 'city', 'budget', 'profession', 'workplace'];
+
 const updateUser = async (req, res) => {
     try {
+        // Previously this route only checked verifytoken — any authenticated
+        // user could PUT to ANY user id, and the whole request body was
+        // spread straight into the update with no field whitelist. That
+        // meant a user could set role/isVerified/isBanned on their own
+        // account (instant admin self-promotion) or edit someone else's
+        // profile outright. Same ownership rule deleteUser already enforces.
+        if (req.user._id.toString() !== req.params.id && req.user.role !== 'admin') {
+            return res.status(403).json({ success: false, message: 'Not authorized to update this account' });
+        }
+
         // Find the user first
         const user = await UserModel.findById(req.params.id);
         if (!user) {
             return res.status(404).json({ success: false, message: 'User not found' });
         }
 
-        // Handle the image upload
-        let updatedData = { ...req.body };
+        const updatedData = {};
+        for (const field of USER_EDITABLE_FIELDS) {
+            if (req.body[field] !== undefined) updatedData[field] = req.body[field];
+        }
 
         // Only update photo if a new one is provided
         if (req.files?.photo) {
@@ -179,9 +198,6 @@ const updateUser = async (req, res) => {
             // block the profile update — fall back to the raw upload.
             updatedData.photo = await compressImage(req.files.photo.path, { maxDimension: 800 }).catch(() => req.files.photo.path);
             updatedData.isVerified = false;
-        } else {
-            // If no new photo, remove photo from updatedData to keep the existing one
-            delete updatedData.photo;
         }
 
         // Update user with new data
@@ -197,6 +213,37 @@ const updateUser = async (req, res) => {
         res.status(422).json({
             success: false,
             message: 'Error updating user',
+            error: err.message
+        });
+    }
+};
+
+// Self-service "pause my search" toggle — only the account owner, and only
+// once verified (an unverified profile is already filtered out of verified
+// viewers' feeds, and still shown to unverified ones regardless, so hiding
+// it wouldn't mean anything consistent until verification exists).
+const toggleVisibility = async (req, res) => {
+    try {
+        if (req.user._id.toString() !== req.params.id) {
+            return res.status(403).json({ success: false, message: 'Not authorized to update this account' });
+        }
+
+        const user = await UserModel.findById(req.params.id).select('isVerified isHidden');
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+        if (!user.isVerified) {
+            return res.status(403).json({ success: false, message: 'Vérifiez votre profil avant de pouvoir le masquer.' });
+        }
+
+        user.isHidden = !!req.body.isHidden;
+        await user.save();
+
+        res.status(200).json({ success: true, isHidden: user.isHidden });
+    } catch (err) {
+        res.status(422).json({
+            success: false,
+            message: 'Error updating visibility',
             error: err.message
         });
     }
@@ -296,7 +343,7 @@ const filterUser = async (req, res) => {
       gender // Add gender to the destructured parameters
     } = req.body;
 
-    let query = { role: { $ne: 'admin' }, isBanned: { $ne: true }, isVerified: true };
+    let query = { role: { $ne: 'admin' }, isBanned: { $ne: true }, isVerified: true, isHidden: { $ne: true } };
 
     // Basic filters
     if (governorate) query.governorate = governorate;
@@ -418,4 +465,4 @@ const deleteUser = async (req, res) => {
 }
 
 
-module.exports = { getAll, CreateUser, updateUser, deleteUser, filterUser,getUserById }
+module.exports = { getAll, CreateUser, updateUser, deleteUser, filterUser, getUserById, toggleVisibility }

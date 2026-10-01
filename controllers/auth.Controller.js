@@ -12,6 +12,7 @@ const path = require('path');
 let io;
 const BannedEmailModel = require('../models/BannedEmail.model')
 const { compressImage } = require('../utils/compressImage');
+const { buildActionEmailHtml } = require('../utils/emailTemplate');
 
 // Tokens used to never expire, so a leaked/stolen token stayed valid forever.
 // 7 days bounds a silent, undetected leak — the actual kill-switch for a
@@ -19,30 +20,6 @@ const { compressImage } = require('../utils/compressImage');
 // every existing token immediately regardless of this value.
 const JWT_EXPIRES_IN = '7d';
 
-const EMAIL_VERIFICATION_EXPIRES_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-// Fire-and-log, not fire-and-fail: a mail-server hiccup here must never
-// block signup or a resend request, since the account/session already
-// exists independently of whether this email actually goes out.
-const sendVerificationEmail = async (user) => {
-  const token = uuid.v7();
-  user.emailVerificationToken = token;
-  user.emailVerificationExpires = Date.now() + EMAIL_VERIFICATION_EXPIRES_MS;
-  await user.save();
-
-  const mailContent = {
-    from: 'NODE APP',
-    to: user.email,
-    subject: 'Confirmez votre adresse email - Binomy',
-    text: `Bienvenue sur Binomy !\nConfirmez votre adresse email en cliquant sur le lien ci-dessous :\n${process.env.FRONTEND_URL || 'http://localhost:4200'}/auth/verify-email?token=${token}\n\nCe lien expire dans 24 heures.`
-  };
-
-  try {
-    await transporter.sendMail(mailContent);
-  } catch (err) {
-    console.error('Failed to send verification email:', err.message);
-  }
-};
 exports.setSocketIo = (socketIoInstance) => {
     io = socketIoInstance;
 };
@@ -245,11 +222,6 @@ exports.register = async (req, res) => {
 
     await newUser.save();
 
-    // Signup completes and the user is logged in immediately regardless of
-    // this — email confirmation is a non-blocking nudge, not a gate (see
-    // sendVerificationEmail's own comment for why failures here don't throw).
-    sendVerificationEmail(newUser).catch(() => {});
-
     // 10. Generate token and send response
     const token = jwt.sign({ _id: newUser._id, role: newUser.role, tokenVersion: newUser.tokenVersion }, process.env.SECRET, { expiresIn: JWT_EXPIRES_IN });
 
@@ -354,6 +326,11 @@ exports.updatePassword = async (req, res) => {
   exports.forgotPassword = async(req, res) => {
     let { email } = req.body
     if (email) {
+        // Always the same 200 + generic message whether or not the account
+        // exists — returning a distinct "user not found" previously let
+        // anyone enumerate which emails have accounts just by trying this
+        // form. Real sends still only happen below, for an actual match.
+        const genericResponse = { message: 'Si un compte existe avec cet email, un lien de réinitialisation a été envoyé.' }
         try {
             let user = await UserModel.findOne({ email: email })
             if (user) {
@@ -363,68 +340,39 @@ exports.updatePassword = async (req, res) => {
                 user.resetTimeout = date.getTime()
                 //console.log(user.resetKey)
 
+                const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:4200'}/auth/resetpassword?resetKey=${user.resetKey}`
                 let mailContent = {
                     from: 'NODE APP',
                     to: user.email,
                     subject: 'Reset Password',
-                    text: `You requested a password reset.\nClick the link below to reset your password:\n${process.env.FRONTEND_URL || 'http://localhost:4200'}/auth/resetpassword?resetKey=${user.resetKey}\n\nIf you did not request this, please ignore this email.`
-
-                    //text: 'reset password : ' + user.resetKey
-
+                    text: `You requested a password reset.\nClick the link below to reset your password:\n${resetUrl}\n\nIf you did not request this, please ignore this email.`,
+                    html: buildActionEmailHtml({
+                        heading: 'Réinitialisation du mot de passe',
+                        bodyLines: [
+                            'Vous avez demandé la réinitialisation de votre mot de passe.',
+                            'Cliquez sur le bouton ci-dessous pour choisir un nouveau mot de passe.',
+                        ],
+                        buttonLabel: 'Réinitialiser mon mot de passe',
+                        buttonUrl: resetUrl,
+                        footerNote: 'Ce lien expire dans 20 minutes. Si vous n’êtes pas à l’origine de cette demande, ignorez cet email.',
+                    }),
                 }
                 await transporter.sendMail(mailContent)
                 await user.save()
-                res.send({ message: 'mail sent successfully' })
-            } else {
-                res.status(404).send({ message: 'user not found !!' })
             }
+            res.send(genericResponse)
         } catch (err) {
+            // A genuine failure (mail service down, DB error) — still never
+            // echoes the raw error or says whether the account existed, but
+            // unlike the two outcomes above it's reported as a real failure
+            // so a legitimate user isn't told "sent" when nothing went out.
             console.log(err)
-            res.status(404).send(err)
+            res.status(500).send({ message: 'Une erreur est survenue, veuillez réessayer plus tard.' })
         }
     } else {
         res.status(444).send({ message: 'missing information !!' })
     }
 };
 
-exports.verifyEmail = async (req, res) => {
-  const { token } = req.body;
-  if (!token) {
-    return res.status(400).send({ message: 'token requis' });
-  }
-
-  try {
-    const user = await UserModel.findOne({ emailVerificationToken: token });
-    if (!user || Date.now() > user.emailVerificationExpires) {
-      return res.status(400).send({ message: 'Lien de confirmation invalide ou expiré.' });
-    }
-
-    user.emailVerified = true;
-    user.emailVerificationToken = undefined;
-    user.emailVerificationExpires = undefined;
-    await user.save();
-
-    res.send({ message: 'Adresse email confirmée avec succès.' });
-  } catch (err) {
-    res.status(500).send({ message: 'Erreur lors de la confirmation', error: err.message });
-  }
-};
-
-exports.resendVerificationEmail = async (req, res) => {
-  try {
-    const user = await UserModel.findById(req.user._id);
-    if (!user) {
-      return res.status(404).send({ message: 'Utilisateur introuvable' });
-    }
-    if (user.emailVerified) {
-      return res.status(409).send({ message: 'Cette adresse email est déjà confirmée.' });
-    }
-
-    await sendVerificationEmail(user);
-    res.send({ message: 'Email de confirmation renvoyé.' });
-  } catch (err) {
-    res.status(500).send({ message: 'Erreur lors de l\'envoi', error: err.message });
-  }
-};
 
   

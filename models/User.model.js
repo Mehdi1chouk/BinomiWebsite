@@ -33,13 +33,13 @@ const Schema = mongoose.Schema({
     banReason: { type: String },
     tokenVersion: { type: Number, default: 0 },
     isVerified: { type: Boolean, default: false },
-    // Separate from isVerified (that's the live face-match check). This
-    // only confirms the email address itself is real and reachable — it
-    // doesn't gate signup or login (see register()), just nudges the user
-    // to confirm so password-reset/admin emails actually reach them.
-    emailVerified: { type: Boolean, default: false },
-    emailVerificationToken: String,
-    emailVerificationExpires: Number,
+    // Self-service "pause my search" — opt out of the browse feed and filter
+    // results without deactivating the account. Only meaningful (and only
+    // settable) for verified users; see toggleVisibility. Deliberately does
+    // NOT affect getUserById, so existing chats/roommates/direct links still
+    // work — this only hides someone from new discovery, not from people
+    // who already found them.
+    isHidden: { type: Boolean, default: false },
 }, {
     timestamps: true
 })
@@ -47,6 +47,6 @@ const Schema = mongoose.Schema({
 // Matches the exact filter shape both the browse feed (getAll) and the
 // filter endpoint (filterUser) always query with first, before any of the
 // optional criteria (governorate, gender, age, budget...) are layered on.
-Schema.index({ role: 1, isBanned: 1, isVerified: 1 });
+Schema.index({ role: 1, isBanned: 1, isVerified: 1, isHidden: 1 });
 
 module.exports = mongoose.model('User', Schema)
