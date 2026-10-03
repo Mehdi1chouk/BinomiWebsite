@@ -5,9 +5,10 @@ const NotificationModel = require('../models/Notification.model');
 const RoomModel = require('../models/Room.model');
 const AdminActionModel = require('../models/AdminAction.model');
 const ChatModel = require('../models/Chat.model');
+const PushSubscriptionModel = require('../models/PushSubscription.model');
 const { getIO } = require('../socketio');
 const { API_BASE_URL } = require('../utils/apiBaseUrl');
-const { deleteUploadedFiles } = require('../utils/deleteUploadedFile');
+const { deleteUploadedFile, deleteUploadedFiles } = require('../utils/deleteUploadedFile');
 const { sendPushToUser, sendPushToUsers } = require('../utils/sendPushNotification');
 
 const resolvePhotoUrl = (photo) => (photo ? `${API_BASE_URL}/${photo.replace(/\\/g, '/')}` : null);
@@ -189,6 +190,64 @@ exports.unbanUser = async (req, res) => {
   }
 };
 
+// Permanently removes the account — unlike banUser, this frees the email to
+// register again (no BannedEmail entry left behind) and erases the person
+// entirely rather than just locking them out. Cascades everything a dangling
+// reference to this id could otherwise break or leave stale:
+//  - a room they OWN is deleted outright, photos included — unlike the
+//    self-service deleteRoom, this never blocks on existing occupants,
+//    since the owner themself is the one being removed;
+//  - a room they're an OCCUPANT of (someone else's binôme) just loses them
+//    from its occupants list — the room and any other occupant are
+//    untouched, per the ask: binômes "still exist in application";
+//  - notifications, chat messages, reports and push subscriptions involving
+//    them are purged so nothing keeps referencing a user that no longer
+//    exists.
+exports.deleteUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await UserModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Utilisateur introuvable' });
+    }
+    if (user.role === 'admin') {
+      return res.status(403).json({ success: false, message: 'Impossible de supprimer un compte administrateur' });
+    }
+
+    const ownedRoom = await RoomModel.findOne({ user_id: userId });
+    if (ownedRoom) {
+      await RoomModel.findByIdAndDelete(ownedRoom._id);
+      deleteUploadedFiles(ownedRoom.photos);
+    }
+
+    await RoomModel.updateMany(
+      { occupants: userId },
+      { $pull: { occupants: userId }, $inc: { currentOccupants: -1 } },
+    );
+    // $inc above can take a room to -1 if currentOccupants was already out of
+    // sync — same floor decrementCurrentUserOccupants applies for the same
+    // reason (room.Controller.js).
+    await RoomModel.updateMany({ currentOccupants: { $lt: 0 } }, { $set: { currentOccupants: 0 } });
+
+    await Promise.all([
+      NotificationModel.deleteMany({ $or: [{ sender: userId }, { receiver: userId }] }),
+      ChatModel.deleteMany({ $or: [{ sender: userId }, { receiver: userId }] }),
+      ReportModel.deleteMany({ $or: [{ reporterId: userId }, { reportedUserId: userId }] }),
+      PushSubscriptionModel.deleteMany({ user: userId }),
+      BannedEmailModel.deleteOne({ email: user.email }),
+    ]);
+
+    deleteUploadedFile(user.photo);
+    await UserModel.findByIdAndDelete(userId);
+
+    await logAdminAction(req.user._id, 'delete-user', 'user', userId, `${user.firstname} ${user.lastname} (${user.email})`);
+
+    res.status(200).json({ success: true, message: 'Utilisateur supprimé' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Error deleting user', error: error.message });
+  }
+};
+
 // General user directory — search by name/email, optionally filtered by
 // status. This is what admin.Controller was missing entirely before: the
 // only way to reach a user was if they'd already been reported.
@@ -205,11 +264,12 @@ exports.searchUsers = async (req, res) => {
     if (status === 'banned') filter.isBanned = true;
     else if (status === 'verified') filter.isVerified = true;
     else if (status === 'unverified') filter.isVerified = { $ne: true };
+    else if (status === 'hidden') filter.isHidden = true;
 
     if (gender === 'male' || gender === 'female') filter.gender = gender;
 
     const users = await UserModel.find(filter)
-      .select('firstname lastname email photo gender isBanned isVerified createdAt')
+      .select('firstname lastname email photo gender isBanned isVerified isHidden createdAt')
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();

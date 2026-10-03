@@ -454,7 +454,10 @@ const acceptNotification = async (req, res) => {
       const confirmationNotification = new NotificationModel({
         sender: userId,
         receiver: notification.sender,
-        message: `${accepter?.firstname ?? 'Votre binôme'} a accepté votre demande de colocation ! Vous pouvez aller dans l'espace chat et commencer à discuter.`,
+        // Unlike contact-accepted below, these two were already chatting
+        // before one proposed binôme — "go to chat and start discussing"
+        // would be telling them to do something they've already been doing.
+        message: `${accepter?.firstname ?? 'Votre binôme'} a accepté votre demande de colocation !`,
         type: 'binome-accepted',
         status: 'accepted'
       });

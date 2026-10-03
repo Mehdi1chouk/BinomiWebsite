@@ -59,6 +59,7 @@ module.exports = (server) => {
     server.post('/admin/users/:userId/alert', verifytoken, requireAdmin, adminController.sendAlert);
     server.post('/admin/users/:userId/ban', verifytoken, requireAdmin, adminController.banUser);
     server.post('/admin/users/:userId/unban', verifytoken, requireAdmin, adminController.unbanUser);
+    server.delete('/admin/users/:userId', verifytoken, requireAdmin, adminController.deleteUser);
     server.get('/admin/users', verifytoken, requireAdmin, adminController.searchUsers);
     server.get('/admin/users/:userId/detail', verifytoken, requireAdmin, adminController.getUserDetail);
     server.patch('/admin/users/:userId/verification', verifytoken, requireAdmin, adminController.setVerification);

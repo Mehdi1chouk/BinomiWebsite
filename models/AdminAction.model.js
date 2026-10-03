@@ -8,7 +8,7 @@ const Schema = new mongoose.Schema({
     action: {
         type: String,
         required: true,
-        enum: ['ban', 'unban', 'alert', 'verify', 'unverify', 'delete-room', 'broadcast']
+        enum: ['ban', 'unban', 'alert', 'verify', 'unverify', 'delete-room', 'delete-user', 'broadcast']
     },
     targetType: { type: String, enum: ['user', 'room', 'broadcast'], required: true },
     targetId: { type: mongoose.Schema.Types.ObjectId },
