@@ -14,7 +14,7 @@ const buildActionEmailHtml = ({ heading, bodyLines, buttonLabel, buttonUrl, foot
           <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px; width:100%; background-color:#ffffff; border-radius:16px; overflow:hidden;">
             <tr>
               <td style="background-color:#3d2c5b; padding:24px 32px;">
-                <span style="font-size:20px; font-weight:bold; color:#ffffff;">Binomy</span>
+                <span style="font-size:20px; font-weight:bold; color:#ffffff;">binom</span><span style="font-size:20px; font-weight:bold; color:#ff6b4a;">i</span>
               </td>
             </tr>
             <tr>

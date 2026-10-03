@@ -126,7 +126,7 @@ exports.sendAlert = async (req, res) => {
     });
 
     sendPushToUser(userId, {
-      title: 'Avertissement de Binomy',
+      title: 'Avertissement de Binomi',
       body: message,
       url: '/app/notifications'
     }).catch(() => {});
@@ -458,7 +458,7 @@ exports.broadcast = async (req, res) => {
     });
 
     sendPushToUsers(targets.map((target) => target._id), {
-      title: 'Binomy',
+      title: 'Binomi',
       body: message.trim(),
       url: '/app/notifications'
     }).catch(() => {});
