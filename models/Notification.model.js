@@ -9,7 +9,7 @@ const Schema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }, // Timestamp
     isRead: { type: Boolean, default: false }, // Notification status (read/unread)
     status: { type: String, enum: ['pending', 'accepted', 'refused'], default: 'pending' },
-    type: { type: String, enum: ['contact', 'binome', 'alert', 'binome-accepted', 'contact-accepted', 'rejected', 'house-archived'], default: 'contact' },
+    type: { type: String, enum: ['contact', 'binome', 'alert', 'binome-accepted', 'binome-removed', 'contact-accepted', 'rejected', 'house-archived'], default: 'contact' },
     roomId: { type: mongoose.Schema.Types.ObjectId, ref: RoomModel }
 });
 

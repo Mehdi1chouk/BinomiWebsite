@@ -32,6 +32,9 @@ app.use(cors({
         callback(error);
     }
 }))
+// Used by the Docker healthcheck and, later, Azure's load balancer probe.
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
 // Express setup
 require('./routes')(app);
 

@@ -397,6 +397,20 @@ const deleteRoom = async (req, res) => {
             return res.status(403).json({ message: 'Not authorized to delete this room' });
         }
 
+        // Only checked for the active room: an archived one's occupants list
+        // is stale leftover data (reactivateRoom always resets it to [] on
+        // reactivation, and nothing elsewhere treats an archived room's
+        // occupants as a live relationship), so it shouldn't block deleting it.
+        // Deleting the room out from under a current binome would silently
+        // orphan their housing with no way for them to find out — make the
+        // owner remove them first instead (same "Retirer comme binôme" flow
+        // this already offers).
+        if (isOwner && room.occupants && room.occupants.length > 0) {
+            return res.status(409).json({
+                message: 'Vous avez un binôme dans ce logement. Retirez-le avant de supprimer ce logement.'
+            });
+        }
+
         await RoomModel.findByIdAndDelete(actualRoomId);
         deleteUploadedFiles(room.photos);
 
@@ -632,6 +646,43 @@ const decrementCurrentUserOccupants = async (req, res) => {
             await updatedRoom.save();
         }
 
+        // The removed occupant has no other way of finding out they lost
+        // their housing — same reasoning as the binome-accepted/contact-
+        // accepted notifications in notification.Controller.js.
+        if (occupantId) {
+            const NotificationModel = require('../models/Notification.model');
+            const { getIO } = require('../socketio');
+            const { sendPushToUser } = require('../utils/sendPushNotification');
+            const { API_BASE_URL } = require('../utils/apiBaseUrl');
+            const resolvePhotoUrl = (photo) => (photo ? `${API_BASE_URL}/${photo.replace(/\\/g, '/')}` : null);
+
+            const owner = await UserModel.findById(req.user._id).select('firstname photo');
+            const removalNotification = new NotificationModel({
+                sender: req.user._id,
+                receiver: occupantId,
+                message: `${owner?.firstname ?? 'Votre binôme'} vous a retiré comme binôme.`,
+                type: 'binome-removed',
+                status: 'refused'
+            });
+            await removalNotification.save();
+
+            const io = getIO();
+            io.to(occupantId.toString()).emit('receive_notification', {
+                _id: removalNotification._id,
+                sender: { _id: req.user._id, firstname: owner?.firstname, photo: resolvePhotoUrl(owner?.photo) },
+                receiverId: occupantId,
+                message: removalNotification.message,
+                createdAt: removalNotification.createdAt,
+                type: 'binome-removed'
+            });
+
+            sendPushToUser(occupantId, {
+                title: 'Binôme retiré',
+                body: removalNotification.message,
+                url: '/app/notifications'
+            }).catch(() => {});
+        }
+
         res.status(200).json(updatedRoom);
     } catch (err) {
         console.error('Error decrementing occupants:', err);
@@ -670,9 +721,14 @@ const getBinomeStatus = async (req, res) => {
         const { otherUserId } = req.params;
         const NotificationModel = require('../models/Notification.model');
 
-        const [room, receiverRoom, sentProposal, receivedProposal] = await Promise.all([
+        const [room, receiverRoom, receiverArchivedRoom, sentProposal, receivedProposal] = await Promise.all([
             RoomModel.findOne({ user_id: currentUserId }),
             RoomModel.findOne({ user_id: otherUserId }),
+            // An archived room isn't gone — its owner can reactivate it any time
+            // (see reactivateRoom). Proposing a binome while this exists would
+            // let them reactivate later and end up both occupying a room AND
+            // owning one, so this counts the same as still owning a room.
+            RoomModel.findOne({ lastOwner: otherUserId, user_id: { $exists: false } }),
             NotificationModel.findOne({ sender: currentUserId, receiver: otherUserId, type: 'binome', status: 'pending' }),
             NotificationModel.findOne({ sender: otherUserId, receiver: currentUserId, type: 'binome', status: 'pending' })
         ]);
@@ -689,6 +745,7 @@ const getBinomeStatus = async (req, res) => {
             alreadyBinome,
             roomFull,
             receiverOwnsRoom: !!receiverRoom,
+            receiverHasArchivedRoom: !!receiverArchivedRoom,
             pendingProposalSent: !!sentProposal,
             pendingProposalReceived: !!receivedProposal,
             pendingProposalReceivedId: receivedProposal ? receivedProposal._id : null

@@ -18,7 +18,7 @@ const resolvePhotoUrl = (photo) => (photo ? `${API_BASE_URL}/${photo.replace(/\\
 // list and its "en colocation avec X" indicator work the same for either
 // role. The indicator (and its co-occupant list) only shows while the room
 // still has open spots: once full there's no one left to recruit.
-const EMPTY_ROOM_INFO = { roomId: null, coOccupants: [], roomSpotsLeft: null };
+const EMPTY_ROOM_INFO = { roomId: null, coOccupants: [], roomSpotsLeft: null, isRoomOwner: false };
 
 const getUserRoomInfo = async (userId) => {
     const room = await RoomModel.findOne({
@@ -49,7 +49,14 @@ const getUserRoomInfo = async (userId) => {
     return {
         roomId: room._id,
         coOccupants,
-        roomSpotsLeft: Math.max(room.nombreDeColocation - room.occupants.length, 0)
+        roomSpotsLeft: Math.max(room.nombreDeColocation - room.occupants.length, 0),
+        // An occupant/binôme is linked to the same room (hence the same
+        // roomId, co-occupants and spots-left above — all needed so their
+        // card can still show "en colocation avec X" and link to the real
+        // owner), but only the owner can actually manage this room or
+        // receive new binôme proposals. Card UI that implies otherwise
+        // (the house icon, the capacity readout) should only show for them.
+        isRoomOwner: room.user_id?._id.toString() === userId.toString()
     };
 };
 
@@ -74,6 +81,8 @@ const getRoomInfoMapForUsers = async (userIds) => {
         const members = room.user_id ? [room.user_id, ...room.occupants] : [...room.occupants];
         const linkedIds = new Set(members.map((member) => member._id.toString()));
 
+        const ownerId = room.user_id?._id?.toString() ?? null;
+
         for (const memberId of linkedIds) {
             let coOccupants = [];
             if (!isFull && room.occupants.length > 0) {
@@ -90,7 +99,8 @@ const getRoomInfoMapForUsers = async (userIds) => {
             map.set(memberId, {
                 roomId: room._id,
                 coOccupants,
-                roomSpotsLeft: Math.max(room.nombreDeColocation - room.occupants.length, 0)
+                roomSpotsLeft: Math.max(room.nombreDeColocation - room.occupants.length, 0),
+                isRoomOwner: ownerId === memberId
             });
         }
     }

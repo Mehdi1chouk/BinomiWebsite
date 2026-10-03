@@ -454,7 +454,7 @@ const acceptNotification = async (req, res) => {
       const confirmationNotification = new NotificationModel({
         sender: userId,
         receiver: notification.sender,
-        message: `${accepter?.firstname ?? 'Votre binôme'} a accepté votre demande de colocation !`,
+        message: `${accepter?.firstname ?? 'Votre binôme'} a accepté votre demande de colocation ! Vous pouvez aller dans l'espace chat et commencer à discuter.`,
         type: 'binome-accepted',
         status: 'accepted'
       });
@@ -502,7 +502,7 @@ const acceptNotification = async (req, res) => {
       conversation = new ChatModel({
         sender: userId,
         receiver: notification.sender,
-        message: "Hello! I've accepted your contact request."
+        message: "Bonjour ! J'ai accepté votre demande de contact."
       });
 
       await conversation.save();
@@ -515,7 +515,7 @@ const acceptNotification = async (req, res) => {
     const contactAcceptedNotification = new NotificationModel({
       sender: userId,
       receiver: notification.sender,
-      message: `${accepterUser?.firstname ?? 'Cette personne'} a accepté votre demande de contact !`,
+      message: `${accepterUser?.firstname ?? 'Cette personne'} a accepté votre demande de contact ! Vous pouvez aller dans l'espace chat et commencer à discuter.`,
       type: 'contact-accepted',
       status: 'accepted'
     });

@@ -313,7 +313,12 @@ exports.updatePassword = async (req, res) => {
       // Check if the old password matches the user's current password
       const isMatch = await bcrypt.compare(oldPassword, user.password);
       if (!isMatch) {
-        return res.status(401).send({ message: "Incorrect old password" });
+        // Not 401: that status means "your token is invalid/expired" to the
+        // frontend's session-expired interceptor, which force-logs-out and
+        // redirects to signin on any 401 — wiping the form before the user
+        // could ever see this message. This is a wrong form value, not an
+        // auth failure, so it gets an ordinary 400 like the check above.
+        return res.status(400).send({ message: "Incorrect old password" });
       }
   
       // Hash the new password
