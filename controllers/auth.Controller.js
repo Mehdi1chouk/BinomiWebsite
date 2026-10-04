@@ -434,9 +434,9 @@ exports.updatePassword = async (req, res) => {
 
                 const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:4200'}/auth/resetpassword?resetKey=${user.resetKey}`
                 let mailContent = {
-                    from: 'NODE APP',
+                    from: `"Binomy" <${process.env.EMAIL_USER}>`,
                     to: user.email,
-                    subject: 'Reset Password',
+                    subject: 'Réinitialisation de votre mot de passe Binomy',
                     text: `You requested a password reset.\nClick the link below to reset your password:\n${resetUrl}\n\nIf you did not request this, please ignore this email.`,
                     html: buildActionEmailHtml({
                         heading: 'Réinitialisation du mot de passe',

@@ -6,7 +6,7 @@ const bcrypt = require('bcryptjs');
 const UserModel = require('../models/User.model');
 
 async function main() {
-  const [, , email, password, firstname = 'Admin', lastname = 'Binomi'] = process.argv;
+  const [, , email, password, firstname = 'Admin', lastname = 'Binomy'] = process.argv;
 
   if (!email || !password) {
     console.error('Usage: node scripts/createAdmin.js <email> <password> [firstname] [lastname]');
@@ -36,7 +36,7 @@ async function main() {
       governorate: 'Tunis',
       city: 'Tunis',
       profession: 'Admin',
-      workplace: 'Binomi',
+      workplace: 'Binomy',
       photo: 'UsersImages/admin-placeholder.jpg',
       role: 'admin',
     });
