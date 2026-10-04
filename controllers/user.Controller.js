@@ -108,8 +108,32 @@ const getRoomInfoMapForUsers = async (userIds) => {
     return map;
 };
 
+// Separate from the room-info map above on purpose: when a room fills up and
+// auto-archives (see acceptNotification in notification.Controller.js), the
+// owner stops matching that map's query entirely (user_id is unset, and an
+// owner is never in their own occupants[]) — which used to silently drop
+// their house icon, and with it the only path a former binôme had to look
+// the listing up again (through the owner's own card). This intentionally
+// does NOT feed into isRoomOwner/roomId/coOccupants — those keep meaning
+// "currently active" exactly as before, so the "en colocation avec" banner
+// and the capacity readout still correctly disappear once a room is done.
+// This only ever unlocks the house icon itself, and only for a room that
+// genuinely completed a colocation (had an occupant when it filled up) — a
+// room someone archived on their own, empty, has no binôme who'd need this.
+const getArchivedOwnedRoomMap = async (userIds) => {
+    const ids = userIds.map((id) => id.toString());
+    const rooms = await RoomModel.find({
+        user_id: null,
+        lastOwner: { $in: ids },
+        'occupants.0': { $exists: true }
+    }).select('lastOwner').lean();
 
-
+    const map = new Map();
+    for (const room of rooms) {
+        map.set(room.lastOwner.toString(), room._id);
+    }
+    return map;
+};
 
 const getAll = async (req, res) => {
     try {
@@ -138,11 +162,16 @@ const getAll = async (req, res) => {
         .limit(300)
         .lean();
 
-      const roomInfoMap = await getRoomInfoMapForUsers(usersList.map((user) => user._id));
+      const userIds = usersList.map((user) => user._id);
+      const [roomInfoMap, archivedOwnedRoomMap] = await Promise.all([
+        getRoomInfoMapForUsers(userIds),
+        getArchivedOwnedRoomMap(userIds),
+      ]);
       const usersWithRooms = usersList.map((user) => ({
         ...user,
         photo: resolvePhotoUrl(user.photo),
-        ...(roomInfoMap.get(user._id.toString()) ?? EMPTY_ROOM_INFO)
+        ...(roomInfoMap.get(user._id.toString()) ?? EMPTY_ROOM_INFO),
+        archivedOwnedRoomId: archivedOwnedRoomMap.get(user._id.toString()) ?? null,
       }));
   
       res.status(200).json({
@@ -401,11 +430,16 @@ const filterUser = async (req, res) => {
 
     // Apply room-based filters and transform photo URLs
     const applyRoomFilters = async (users) => {
-      const roomInfoMap = await getRoomInfoMapForUsers(users.map(user => user._id));
+      const ids = users.map(user => user._id);
+      const [roomInfoMap, archivedOwnedRoomMap] = await Promise.all([
+        getRoomInfoMapForUsers(ids),
+        getArchivedOwnedRoomMap(ids),
+      ]);
       return users.map(user => ({
         ...user.toObject(), // Convert Mongoose document to plain JavaScript object
         photo: resolvePhotoUrl(user.photo),
-        ...(roomInfoMap.get(user._id.toString()) ?? EMPTY_ROOM_INFO)
+        ...(roomInfoMap.get(user._id.toString()) ?? EMPTY_ROOM_INFO),
+        archivedOwnedRoomId: archivedOwnedRoomMap.get(user._id.toString()) ?? null,
       }));
     };
 

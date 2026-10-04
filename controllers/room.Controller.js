@@ -518,6 +518,14 @@ const getRoomById = async (req, res) => {
                 path: 'user_id',
                 select: 'firstname lastname'
             })
+            // A room with no current owner (archived) should still show who
+            // it belonged to on the details page instead of the
+            // "Propriétaire" card just vanishing — see house-details.ts's
+            // owner(), which falls back to this when user_id is unset.
+            .populate({
+                path: 'lastOwner',
+                select: 'firstname lastname'
+            })
             .populate({
                 path: 'occupants',
                 select: 'firstname lastname'
