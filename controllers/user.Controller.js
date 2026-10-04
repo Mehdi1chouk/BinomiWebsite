@@ -1,9 +1,9 @@
 const UserModel = require('../models/User.model');
 const RoomModel = require('../models/Room.model')
-const { encodeRoomId } = require("../utils/hashids");
 const { API_BASE_URL } = require('../utils/apiBaseUrl');
 const { deleteUploadedFile } = require('../utils/deleteUploadedFile');
 const { compressImage } = require('../utils/compressImage');
+const { rejectIfNotImage } = require('../utils/validateImage');
 const jwt = require('jsonwebtoken');
 
 let UsersList = [];
@@ -182,7 +182,7 @@ const getAll = async (req, res) => {
       res.status(500).json({
         success: false,
         message: 'Error fetching users',
-        error: error.message
+        error: process.env.NODE_ENV === 'production' ? undefined : error.message
       });
     }
   };
@@ -225,7 +225,16 @@ const updateUser = async (req, res) => {
         }
 
         // Only update photo if a new one is provided
-        if (req.files?.photo) {
+        if (req.file) {
+            // multer accepts any file regardless of content, and
+            // compressImage's own fallback below silently keeps the RAW file
+            // when sharp can't process it — which would otherwise let a
+            // non-image slip through as a "failed compression" rather than
+            // being rejected outright.
+            if (!(await rejectIfNotImage(req.file.path))) {
+                return res.status(400).json({ success: false, message: 'Fichier image invalide.' });
+            }
+
             // Remove the old profile image if it exists
             if (user.photo) {
                 const oldImagePath = path.join(__dirname, '../', user.photo);
@@ -239,7 +248,7 @@ const updateUser = async (req, res) => {
             // about this one.
             // A failed compression (e.g. an unsupported format) shouldn't
             // block the profile update — fall back to the raw upload.
-            updatedData.photo = await compressImage(req.files.photo.path, { maxDimension: 800 }).catch(() => req.files.photo.path);
+            updatedData.photo = await compressImage(req.file.path, { maxDimension: 800 }).catch(() => req.file.path);
             updatedData.isVerified = false;
         }
 
@@ -248,7 +257,7 @@ const updateUser = async (req, res) => {
             req.params.id,
             updatedData,
             { new: true, runValidators: true }
-        ).select('-password');
+        ).select('-password -resetKey -resetTimeout -tokenVersion -__v');
 
         res.status(200).json({ success: true, data: result });
 
@@ -256,7 +265,7 @@ const updateUser = async (req, res) => {
         res.status(422).json({
             success: false,
             message: 'Error updating user',
-            error: err.message
+            error: process.env.NODE_ENV === 'production' ? undefined : err.message
         });
     }
 };
@@ -287,15 +296,20 @@ const toggleVisibility = async (req, res) => {
         res.status(422).json({
             success: false,
             message: 'Error updating visibility',
-            error: err.message
+            error: process.env.NODE_ENV === 'production' ? undefined : err.message
         });
     }
 };
 
 const getUserById = async (req, res) => {
     try {
+        // -password alone left resetKey/resetTimeout in the response — any
+        // logged-in viewer of ANY user's profile (no ownership check on this
+        // route) could read their live password-reset token straight out of
+        // the JSON and use it with /reset-password for a full takeover,
+        // after just triggering /forgot-password for that email themselves.
         const user = await UserModel.findById(req.params.id)
-            .select('-password')
+            .select('-password -resetKey -resetTimeout -tokenVersion -__v')
             .lean();
 
         if (!user) {
@@ -366,7 +380,7 @@ const getUserById = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Server error',
-            error: err.message
+            error: process.env.NODE_ENV === 'production' ? undefined : err.message
         });
     }
 };
@@ -513,7 +527,12 @@ const deleteUser = async (req, res) => {
 
         res.send({ message: 'User deleted successfully' });
     } catch (err) {
-        res.status(422).send(err);
+        // Was `res.send(err)` — the raw Error/CastError object, inconsistent
+        // with every other catch block's sanitized-in-production pattern.
+        res.status(422).send({
+            message: 'Error deleting user',
+            error: process.env.NODE_ENV === 'production' ? undefined : err.message
+        });
     }
 }
 

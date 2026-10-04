@@ -3,11 +3,33 @@ const RoomController = require('./controllers/room.Controller')
 const authController = require('./controllers/auth.Controller')
 const notifController = require('./controllers/notification.Controller')
 const chatController = require('./controllers/chat.Controller')
-const multiparty = require('connect-multiparty')
-// Without a cap, connect-multiparty defaults to Infinity: a single large (or
-// malicious) upload can fill the disk and take the server down for everyone.
-const uploadmiddleware = multiparty({ uploadDir: './UsersImages', maxFilesSize: 10 * 1024 * 1024 }) // 10MB: one profile/verification photo
-const uploadroomImages = multiparty({ uploadDir: './RoomImages', maxFilesSize: 50 * 1024 * 1024 }) // 50MB: a room listing's whole photo set
+const multer = require('multer');
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+
+// connect-multiparty is unmaintained with an open, unpatched "arbitrary file
+// upload" advisory (GHSA-w2xw-44r3-4v9g) — multer is the actively maintained
+// equivalent. Generates its own random filename (multer's default drops the
+// extension entirely, which would break anything downstream that assumes
+// one, like compressImage's `.jpg` swap).
+const randomFilename = (file) => `${uuidv4()}${path.extname(file.originalname)}`;
+
+const usersImagesStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, './UsersImages'),
+    filename: (req, file, cb) => cb(null, randomFilename(file))
+});
+const roomImagesStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, './RoomImages'),
+    filename: (req, file, cb) => cb(null, randomFilename(file))
+});
+
+// One profile/verification photo — 10MB.
+const uploadmiddleware = multer({ storage: usersImagesStorage, limits: { fileSize: 10 * 1024 * 1024 } });
+// A room listing's whole photo set — 50MB per photo, capped at 10 photos so
+// the per-request total stays bounded (connect-multiparty's maxFilesSize was
+// a 50MB TOTAL cap; multer's fileSize is per-file, so the count cap is what
+// keeps the worst case from growing unbounded).
+const uploadroomImages = multer({ storage: roomImagesStorage, limits: { fileSize: 50 * 1024 * 1024, files: 10 } });
 const { verifytoken, requireAdmin, requireVerified } = require('./middlewares/AuthMiddleWare')
 const reportController = require('./controllers/report.Controller');
 const adminController = require('./controllers/admin.Controller');
@@ -32,25 +54,37 @@ const authFormLimiter = rateLimit({
     legacyHeaders: false,
     message: { message: 'Trop de tentatives. Réessayez dans quelques minutes.' }
 });
+// /verify-face proxies every call to the Flask CLIP/facenet service — each
+// one is real CPU cost there, and without a cap an authenticated-but-stuck
+// liveness flow (or a scripted abuse attempt) could hammer it indefinitely.
+// Higher than authFormLimiter since a genuine user may need several retries
+// to get a good angle/lighting during the actual liveness challenge.
+const verifyFaceLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: 'Trop de tentatives de vérification. Réessayez dans quelques minutes.' }
+});
 module.exports = (server) => {
 
 
     //users
     server.get('/users', verifytoken,UserController.getAll)
-    server.put('/users/:id',verifytoken,uploadmiddleware,UserController.updateUser)
+    server.put('/users/:id',verifytoken,uploadmiddleware.single('photo'),UserController.updateUser)
     server.delete('/users/:id', verifytoken, UserController.deleteUser)
     server.patch('/users/:id/visibility', verifytoken, UserController.toggleVisibility)
     server.post('/users/filter', verifytoken, requireVerified, UserController.filterUser);
     server.get('/users/:id', verifytoken, UserController.getUserById);
 
-    server.post('/report', verifytoken, requireVerified, reportController.reportUser);
+    server.post('/report', verifytoken, requireVerified, authFormLimiter, reportController.reportUser);
 
     //photo verification
-    server.post('/verify-face', verifytoken, uploadmiddleware, verificationController.verifyFace);
+    server.post('/verify-face', verifytoken, verifyFaceLimiter, uploadmiddleware.single('live'), verificationController.verifyFace);
 
     //web push
     server.get('/push/public-key', pushController.getPublicKey);
-    server.post('/push/subscribe', verifytoken, pushController.subscribe);
+    server.post('/push/subscribe', verifytoken, authFormLimiter, pushController.subscribe);
     server.post('/push/unsubscribe', verifytoken, pushController.unsubscribe);
 
     //admin
@@ -71,11 +105,11 @@ module.exports = (server) => {
 
 
     //auth
-    server.post('/register', authFormLimiter, uploadmiddleware,authController.register)
+    server.post('/register', authFormLimiter, uploadmiddleware.single('photo'),authController.register)
     server.post('/login', loginLimiter, authController.login)
     server.post('/forgot-password', authFormLimiter, authController.forgotPassword)
     server.post('/reset-password', authFormLimiter, authController.resetPassword)
-    server.put('/update-password/:userId', verifytoken,authController.updatePassword);
+    server.put('/update-password/:userId', verifytoken, authFormLimiter, authController.updatePassword);
 
 
     //Room
@@ -95,8 +129,8 @@ module.exports = (server) => {
 
     server.get('/room', verifytoken, RoomController.getRoombyUserId)
     server.get('/Allrooms', verifytoken, RoomController.getAllRooms)
-    server.post('/room', verifytoken, uploadroomImages, RoomController.CreateRoom)
-    server.put('/room/:id',  verifytoken,uploadroomImages, RoomController.updateRoom)
+    server.post('/room', verifytoken, requireVerified, uploadroomImages.array('photos', 10), RoomController.CreateRoom)
+    server.put('/room/:id',  verifytoken,requireVerified,uploadroomImages.array('photos', 10), RoomController.updateRoom)
     server.delete('/room/:id', verifytoken, RoomController.deleteRoom)
     server.get('/room/:id', verifytoken, requireVerified, RoomController.getRoomById);
 
@@ -119,7 +153,7 @@ module.exports = (server) => {
     //notifications
     // For sending a notification
     server.post('/notif', verifytoken, requireVerified, notifController.sendNotification);
-    server.post('/notif/binome', verifytoken, notifController.proposeBinome);
+    server.post('/notif/binome', verifytoken, requireVerified, notifController.proposeBinome);
     server.get('/notifications', verifytoken, notifController.getNotifications);
     server.get('/notifications/unread-count', verifytoken, notifController.getUnreadNotificationsCount);
     server.post('/notifications/mark-all-read', verifytoken, notifController.markAllNotificationsAsRead);

@@ -52,7 +52,7 @@ exports.sendMessage = async (req, res) => {
       
     } catch (error) {
       console.error('Error sending message:', error);
-      res.status(500).json({ message: 'Error sending message', error: error.message });
+      res.status(500).json({ message: 'Error sending message', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
     }
   };
   
@@ -134,7 +134,7 @@ exports.getConversations = async (req, res) => {
       console.error('Error getting conversations:', error);
       res.status(500).json({
         message: 'Error getting conversations',
-        error: error.message
+        error: process.env.NODE_ENV === 'production' ? undefined : error.message
       });
     }
   };
@@ -189,7 +189,7 @@ exports.getConversations = async (req, res) => {
       console.error('Error getting messages:', error);
       res.status(500).json({
         message: 'Error getting messages',
-        error: error.message
+        error: process.env.NODE_ENV === 'production' ? undefined : error.message
       });
     }
   };

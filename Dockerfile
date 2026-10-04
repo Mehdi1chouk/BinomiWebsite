@@ -15,6 +15,13 @@ COPY . .
 # recreation instead of living only in this layer.
 RUN mkdir -p UsersImages RoomImages
 
+# Running as root means a code-execution bug anywhere in this app (or one of
+# its dependencies) gets root inside the container for free. node:20-alpine
+# already ships an unprivileged `node` user (uid 1000) — just needs to own
+# the app dir and the upload folders it writes to at runtime.
+RUN chown -R node:node /app
+USER node
+
 EXPOSE 3003
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

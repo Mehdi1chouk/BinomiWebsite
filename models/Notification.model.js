@@ -5,7 +5,10 @@ const mongoose = require('mongoose');
 const Schema = new mongoose.Schema({
     sender: { type: mongoose.Schema.Types.ObjectId, ref: UserModel, required: true }, // Sender ID
     receiver: { type: mongoose.Schema.Types.ObjectId, ref: UserModel, required: true }, // Receiver ID
-    message: { type: String, required: true }, // Notification content
+    // 2000 is generous for any real notification text (contact/binome
+    // messages, alerts) while bounding storage/push-payload size — nothing
+    // enforced a limit before.
+    message: { type: String, required: true, maxlength: 2000 }, // Notification content
     createdAt: { type: Date, default: Date.now }, // Timestamp
     isRead: { type: Boolean, default: false }, // Notification status (read/unread)
     status: { type: String, enum: ['pending', 'accepted', 'refused'], default: 'pending' },

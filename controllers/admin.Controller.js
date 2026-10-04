@@ -62,7 +62,7 @@ exports.getReportedUsers = async (req, res) => {
 
     res.status(200).json({ success: true, data: users.filter(Boolean) });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error fetching reported users', error: error.message });
+    res.status(500).json({ success: false, message: 'Error fetching reported users', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -91,7 +91,7 @@ exports.getReportsForUser = async (req, res) => {
 
     res.status(200).json({ success: true, data });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error fetching reports', error: error.message });
+    res.status(500).json({ success: false, message: 'Error fetching reports', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -136,7 +136,7 @@ exports.sendAlert = async (req, res) => {
 
     res.status(200).json({ success: true, message: 'Alerte envoyée' });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Erreur lors de l'envoi de l'alerte", error: error.message });
+    res.status(500).json({ success: false, message: "Erreur lors de l'envoi de l'alerte", error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -167,7 +167,7 @@ exports.banUser = async (req, res) => {
 
     res.status(200).json({ success: true, message: 'Utilisateur banni' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Erreur lors du bannissement', error: error.message });
+    res.status(500).json({ success: false, message: 'Erreur lors du bannissement', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -186,7 +186,7 @@ exports.unbanUser = async (req, res) => {
 
     res.status(200).json({ success: true, message: 'Utilisateur débanni' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Erreur lors du débannissement', error: error.message });
+    res.status(500).json({ success: false, message: 'Erreur lors du débannissement', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -244,7 +244,7 @@ exports.deleteUser = async (req, res) => {
 
     res.status(200).json({ success: true, message: 'Utilisateur supprimé' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error deleting user', error: error.message });
+    res.status(500).json({ success: false, message: 'Error deleting user', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -257,7 +257,14 @@ exports.searchUsers = async (req, res) => {
     const filter = { role: { $ne: 'admin' } };
 
     if (query && query.trim()) {
-      const regex = new RegExp(query.trim(), 'i');
+      // The query was compiled as a regex pattern verbatim — a search for
+      // "(a+)+$" or similar triggers catastrophic backtracking (ReDoS)
+      // against every firstname/lastname/email in the collection, and even
+      // an innocent search containing "(" or "[" threw a SyntaxError. Escape
+      // regex metacharacters so the query is always matched as a literal
+      // substring, same intent as before (case-insensitive partial match).
+      const escaped = query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(escaped, 'i');
       filter.$or = [{ firstname: regex }, { lastname: regex }, { email: regex }];
     }
 
@@ -281,7 +288,7 @@ exports.searchUsers = async (req, res) => {
 
     res.status(200).json({ success: true, data });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error searching users', error: error.message });
+    res.status(500).json({ success: false, message: 'Error searching users', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -291,7 +298,9 @@ exports.searchUsers = async (req, res) => {
 exports.getUserDetail = async (req, res) => {
   try {
     const { userId } = req.params;
-    const user = await UserModel.findById(userId).select('-password').lean();
+    // -password alone left resetKey/resetTimeout in the response — see the
+    // same fix in user.Controller.js's getUserById for why that's exploitable.
+    const user = await UserModel.findById(userId).select('-password -resetKey -resetTimeout -tokenVersion -__v').lean();
     if (!user) {
       return res.status(404).json({ success: false, message: 'Utilisateur introuvable' });
     }
@@ -332,7 +341,7 @@ exports.getUserDetail = async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error fetching user detail', error: error.message });
+    res.status(500).json({ success: false, message: 'Error fetching user detail', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -353,7 +362,7 @@ exports.setVerification = async (req, res) => {
 
     res.status(200).json({ success: true, message: isVerified ? 'Utilisateur vérifié' : 'Vérification retirée' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error updating verification', error: error.message });
+    res.status(500).json({ success: false, message: 'Error updating verification', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -390,7 +399,7 @@ exports.getListings = async (req, res) => {
 
     res.status(200).json({ success: true, data });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error fetching listings', error: error.message });
+    res.status(500).json({ success: false, message: 'Error fetching listings', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -408,7 +417,7 @@ exports.removeListing = async (req, res) => {
 
     res.status(200).json({ success: true, message: 'Logement supprimé' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error removing listing', error: error.message });
+    res.status(500).json({ success: false, message: 'Error removing listing', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -469,7 +478,7 @@ exports.getDashboardStats = async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error fetching stats', error: error.message });
+    res.status(500).json({ success: false, message: 'Error fetching stats', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -528,7 +537,7 @@ exports.broadcast = async (req, res) => {
 
     res.status(200).json({ success: true, message: 'Diffusion envoyée', recipientCount: targets.length });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error broadcasting', error: error.message });
+    res.status(500).json({ success: false, message: 'Error broadcasting', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -537,6 +546,6 @@ exports.getAuditLog = async (req, res) => {
     const actions = await AdminActionModel.find({}).sort({ createdAt: -1 }).limit(200).lean();
     res.status(200).json({ success: true, data: actions });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error fetching audit log', error: error.message });
+    res.status(500).json({ success: false, message: 'Error fetching audit log', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };

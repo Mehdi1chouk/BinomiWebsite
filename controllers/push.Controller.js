@@ -23,7 +23,7 @@ exports.subscribe = async (req, res) => {
 
         res.status(201).json({ success: true });
     } catch (err) {
-        res.status(500).json({ message: 'Error saving push subscription', error: err.message });
+        res.status(500).json({ message: 'Error saving push subscription', error: process.env.NODE_ENV === 'production' ? undefined : err.message });
     }
 };
 
@@ -37,6 +37,6 @@ exports.unsubscribe = async (req, res) => {
         await PushSubscriptionModel.deleteOne({ endpoint, user: req.user._id });
         res.status(200).json({ success: true });
     } catch (err) {
-        res.status(500).json({ message: 'Error removing push subscription', error: err.message });
+        res.status(500).json({ message: 'Error removing push subscription', error: process.env.NODE_ENV === 'production' ? undefined : err.message });
     }
 };

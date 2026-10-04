@@ -33,7 +33,13 @@ app.use(cors({
     }
 }))
 // Used by the Docker healthcheck and, later, Azure's load balancer probe.
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+// Without the DB check, this reported "ok" even when Mongo was unreachable
+// (readyState 0/2/3) — every real API call would fail while Docker/Azure
+// kept routing traffic here and restarting nothing.
+app.get('/health', (req, res) => {
+    const dbConnected = mongoose.connection.readyState === 1;
+    res.status(dbConnected ? 200 : 503).json({ status: dbConnected ? 'ok' : 'degraded', db: dbConnected ? 'connected' : 'disconnected' });
+});
 
 // Express setup
 require('./routes')(app);
@@ -41,12 +47,15 @@ require('./routes')(app);
 app.use('/UsersImages', express.static('UsersImages'));
 app.use('/RoomImages', express.static('RoomImages'));
 
-// Catches errors passed via next(err) — in particular connect-multiparty
-// rejecting an upload that exceeds maxFilesSize — and responds with JSON
-// instead of Express's default HTML error page, which the frontend can't parse.
+// Catches errors passed via next(err) — in particular multer rejecting an
+// upload that exceeds its size/count limits — and responds with JSON instead
+// of Express's default HTML error page, which the frontend can't parse.
 app.use((err, req, res, next) => {
-    if (err.code === 'ETOOBIG') {
+    if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({ message: 'Le fichier est trop volumineux.' });
+    }
+    if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+        return res.status(400).json({ message: 'Trop de fichiers envoyés.' });
     }
     console.error(err);
     res.status(err.status || err.statusCode || 500).json({ message: err.message || 'Une erreur est survenue.' });
@@ -75,6 +84,13 @@ process.on('uncaughtException', (err) => {
 // Socket.IO initialization
 const io = socketIO.init(server);
 
+
+// The connect() promise only covers the INITIAL attempt — a later drop (network
+// blip, Atlas restart) after a successful connect fires silently otherwise,
+// with nothing in the logs to explain why /health just started failing.
+mongoose.connection.on('error', (err) => console.error('MongoDB connection error:', err));
+mongoose.connection.on('disconnected', () => console.error('MongoDB disconnected'));
+mongoose.connection.on('reconnected', () => console.log('MongoDB reconnected'));
 
 mongoose.connect(process.env.DB).
 then(() => console.log('mongodb connected')).catch((err) => console.log('error connecting to', err))

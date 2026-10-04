@@ -1,6 +1,7 @@
 const { Server } = require('socket.io');
 const { createAdapter } = require('@socket.io/redis-adapter');
 const { createClient } = require('redis');
+const jwt = require('jsonwebtoken');
 
 let io; // Declare the io instance globally
 
@@ -22,6 +23,28 @@ module.exports = {
             }
         });
         console.log('Socket.IO initialized');
+
+        // Without this, any bare socket.io-client (no browser needed, so the
+        // CORS origin check above doesn't even apply) could call
+        // register_user('<any id>') and silently receive that user's private
+        // chat messages and notifications forever — user ids aren't secret,
+        // they're returned in plain API responses. The handshake is now
+        // authenticated the same way REST requests are: a valid JWT,
+        // verified server-side, determines which room this socket can ever
+        // join — never a value the client supplies directly (see the
+        // 'connection' handler below, which joins socket.data.userId, not
+        // anything from a register_user event).
+        io.use((socket, next) => {
+            const token = socket.handshake.auth?.token;
+            if (!token) return next(new Error('Authentication required'));
+            try {
+                const decoded = jwt.verify(token, process.env.SECRET);
+                socket.data.userId = decoded._id;
+                next();
+            } catch (err) {
+                next(new Error('Invalid token'));
+            }
+        });
 
         // Each user joins a room named after their own id (see register_user
         // below), and every targeted emit elsewhere in the app does
@@ -57,11 +80,14 @@ module.exports = {
         io.on('connection', (client) => {
             console.log(`New client connected: ${client.id}`);
 
-            // Get user ID and join room for targeted notifications
-            client.on('register_user', (userId) => {
-                client.join(userId); // Join a room with the user ID
-                console.log(`User ${userId} registered to room`);
-            });
+            // Joins the room the verified JWT says this socket belongs to —
+            // never a client-supplied id. Fires here rather than on a
+            // register_user event because 'connection' re-runs on every
+            // reconnect too (each reconnect is a fresh connection), so there
+            // only being a single join point also closes the old gap where
+            // a reconnect could leave a socket connected but never rejoined.
+            client.join(client.data.userId);
+            console.log(`User ${client.data.userId} joined their room`);
 
             client.on('disconnect', () => {
                 console.log(`Client disconnected: ${client.id}`);

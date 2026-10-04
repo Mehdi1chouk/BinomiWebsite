@@ -12,6 +12,7 @@ const path = require('path');
 let io;
 const BannedEmailModel = require('../models/BannedEmail.model')
 const { compressImage } = require('../utils/compressImage');
+const { rejectIfNotImage } = require('../utils/validateImage');
 const { buildActionEmailHtml } = require('../utils/emailTemplate');
 
 // Tokens used to never expire, so a leaked/stolen token stayed valid forever.
@@ -19,6 +20,13 @@ const { buildActionEmailHtml } = require('../utils/emailTemplate');
 // KNOWN incident (password change, ban) is tokenVersion, which invalidates
 // every existing token immediately regardless of this value.
 const JWT_EXPIRES_IN = '7d';
+
+// Shared by register/resetPassword/updatePassword so the policy can't drift
+// between signup and every other way a password gets set — previously only
+// register() enforced this, so a reset or password-change could set a
+// password weaker than signup would ever have allowed.
+const STRONG_PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{6,}$/;
+const WEAK_PASSWORD_MESSAGE = 'Le mot de passe doit contenir au moins: 1 majuscule, 1 minuscule, 1 chiffre et 6 caractères minimum';
 
 exports.setSocketIo = (socketIoInstance) => {
     io = socketIoInstance;
@@ -110,6 +118,16 @@ exports.register = async (req, res) => {
       });
     }
 
+    // 3. Validate email format — nothing else here checks this, so a
+    // malformed address (no @, no domain) would otherwise only surface later
+    // as an undeliverable password-reset/notification email.
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(req.body.email.trim())) {
+      return res.status(400).send({
+        message: 'Adresse email invalide'
+      });
+    }
+
       // 4. Validate password strength
     const password = req.body.password;
     
@@ -120,12 +138,8 @@ exports.register = async (req, res) => {
     }
 
     // Strong password validation (at least one uppercase, one lowercase, one number)
-    const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{6,}$/;
-    
-    if (!strongPasswordRegex.test(password)) {
-      return res.status(400).send({
-        message: 'Le mot de passe doit contenir au moins: 1 majuscule, 1 minuscule, 1 chiffre et 6 caractères minimum'
-      });
+    if (!STRONG_PASSWORD_REGEX.test(password)) {
+      return res.status(400).send({ message: WEAK_PASSWORD_MESSAGE });
     }
 
 
@@ -149,7 +163,7 @@ exports.register = async (req, res) => {
     }
 
     // 5. Check if photo is uploaded
-    if (!req.files?.photo) {
+    if (!req.file) {
       return res.status(400).send({
         message: 'Profile photo is required'
       });
@@ -173,11 +187,23 @@ exports.register = async (req, res) => {
     }
 
     // 8. Get photo path and validate image via YOLOv5 Flask API
-    let photoPath = req.files.photo.path;
+    let photoPath = req.file.path;
+
+    // multer accepts any file regardless of content — reject anything that
+    // doesn't actually decode as an image before it's ever sent to Flask or
+    // saved as this user's permanent profile photo.
+    if (!(await rejectIfNotImage(photoPath))) {
+      return res.status(400).send({ message: 'Fichier image invalide.' });
+    }
+
     const form = new FormData();
     form.append('image', fs.createReadStream(photoPath));
 
-    const response = await axios.post('http://127.0.0.1:5000/predict', form, {
+    // Not hardcoded 127.0.0.1: that only ever reaches this same container
+    // once Node and Flask run as separate Docker services — FLASK_API_URL
+    // (e.g. http://flask-api:5000) is what actually resolves to the Flask
+    // container. Falls back to loopback for local dev without Docker.
+    const response = await axios.post(`${process.env.FLASK_API_URL || 'http://127.0.0.1:5000'}/predict`, form, {
       headers: form.getHeaders(),
     });
 
@@ -213,8 +239,23 @@ exports.register = async (req, res) => {
     }
 
     // 9. Create and save new user
+    // Explicit whitelist, not ...req.body: this is a public, unauthenticated
+    // endpoint — connect-multiparty puts every form field onto req.body as a
+    // string, so spreading it let a request simply include role=admin,
+    // isVerified=true, isBanned=false, tokenVersion=0, etc. and have them
+    // saved verbatim, handing out an admin JWT on signup. Same pattern as
+    // USER_EDITABLE_FIELDS in user.Controller.js's updateUser.
+    const REGISTER_FIELDS = [
+      'firstname', 'lastname', 'age', 'email',
+      'gender', 'governorate', 'city', 'profession', 'workplace', 'budget'
+    ];
+    const registerData = {};
+    for (const field of REGISTER_FIELDS) {
+      if (req.body[field] !== undefined) registerData[field] = req.body[field];
+    }
+
     const newUser = new UserModel({
-      ...req.body,
+      ...registerData,
       preferences,
       password: hashedPassword,
       photo: photoPath
@@ -242,7 +283,7 @@ exports.register = async (req, res) => {
     }
     res.status(500).send({
       message: 'Registration failed',
-      error: err.message
+      error: process.env.NODE_ENV === 'production' ? undefined : err.message
     });
   }
 };
@@ -274,6 +315,11 @@ exports.register = async (req, res) => {
 exports.resetPassword = async(req, res) => {
     const { resetKey, newPassword } = req.body
     if (resetKey && newPassword) {
+        // Was unenforced here — only register() checked this, so a reset
+        // could set a password weaker than signup would ever allow.
+        if (!STRONG_PASSWORD_REGEX.test(newPassword)) {
+            return res.status(400).send({ message: WEAK_PASSWORD_MESSAGE });
+        }
         try {
             let user = await UserModel.findOne({ resetKey: resetKey })
             let time = (new Date()).getTime()
@@ -287,7 +333,12 @@ exports.resetPassword = async(req, res) => {
             }
         } catch (err) {
             console.log(err)
-            res.status(404).send(err)
+            // Was `res.send(err)` — the raw Error object, inconsistent with
+            // every other catch block's sanitized-in-production pattern.
+            res.status(404).send({
+                message: 'An error occurred while resetting the password',
+                error: process.env.NODE_ENV === 'production' ? undefined : err.message
+            })
         }
     } else {
         res.status(444).send({ message: 'missing information !!' })
@@ -298,11 +349,25 @@ exports.resetPassword = async(req, res) => {
 exports.updatePassword = async (req, res) => {
     const { userId } = req.params; // Extract userId from URL params
     const { oldPassword, newPassword } = req.body; // Extract old and new passwords from request body
-  
+
     if (!oldPassword || !newPassword) {
       return res.status(400).send({ message: "Missing password information" });
     }
-  
+
+    // Was unenforced here too — same as resetPassword.
+    if (!STRONG_PASSWORD_REGEX.test(newPassword)) {
+      return res.status(400).send({ message: WEAK_PASSWORD_MESSAGE });
+    }
+
+    // verifytoken only proves the caller IS someone; without this, any logged-in
+    // user could pass any other user's id here and — if they already knew that
+    // user's current password for some other reason (e.g. a reused/leaked
+    // password) — change it, locking the real owner out. Only the account
+    // owner may change their own password.
+    if (req.user._id !== userId) {
+      return res.status(403).send({ message: "Vous ne pouvez modifier que votre propre mot de passe." });
+    }
+
     try {
       const user = await UserModel.findById(userId); // Find user by ID
   

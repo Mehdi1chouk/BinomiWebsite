@@ -52,7 +52,7 @@ const resolvePhotoUrl = (photo) => (photo ? `${API_BASE_URL}/${photo.replace(/\\
 //         console.error('Error sending notification:', error);
 //         res.status(500).json({
 //             message: 'Error sending notification',
-//             error: error.message
+//             error: process.env.NODE_ENV === 'production' ? undefined : error.message
 //         });
 //     }
 // };
@@ -66,9 +66,18 @@ const resolvePhotoUrl = (photo) => (photo ? `${API_BASE_URL}/${photo.replace(/\\
 const checkNotificationStatus = async (req, res) => {
   try {
     const { receiverId, senderId } = req.query;
-    
+
     if (!receiverId || !senderId) {
       return res.status(400).json({ error: 'Both receiverId and senderId are required' });
+    }
+
+    // Unlike checkExistingConversation/getBinomeStatus (which always use
+    // req.user._id as one side), this endpoint took both ids from the query
+    // string — any logged-in user could ask about two OTHER arbitrary users'
+    // contact-request status. The frontend only ever calls this with the
+    // caller's own id as one of the two, so enforcing that here costs nothing.
+    if (req.user._id !== senderId && req.user._id !== receiverId) {
+      return res.status(403).json({ error: 'Vous ne pouvez consulter que vos propres relations.' });
     }
 
     // Check for pending notifications (both directions) — contact requests only,
@@ -106,8 +115,14 @@ const checkNotificationStatus = async (req, res) => {
 // Updated sendNotification function to prevent duplicates
 const sendNotification = async (req, res) => {
   try {
-    const { senderId, receiverId, message } = req.body;
-    
+    // senderId used to come straight from the request body, unlike
+    // proposeBinome in this same file which correctly uses req.user._id —
+    // any authenticated+verified user could forge a 'contact' notification
+    // that appears to come from an arbitrary third party (populated with
+    // that person's real name/photo) and push it to an arbitrary victim.
+    const senderId = req.user._id;
+    const { receiverId, message } = req.body;
+
     // Verify sender and receiver exist
     const sender = await UserModel.findById(senderId);
     const receiver = await UserModel.findById(receiverId);
@@ -150,9 +165,12 @@ const sendNotification = async (req, res) => {
     const senderPayload = populatedNotification.sender.toObject();
     senderPayload.photo = resolvePhotoUrl(senderPayload.photo);
 
-    // Emit notification to all connected clients
+    // Targeted at the receiver only — every other emit in this file already
+    // does this (io.to(...)); this was the one spot still broadcasting to
+    // every connected client, leaking this notification's sender/message to
+    // users who aren't a party to it.
     const io = getIO();
-    io.emit('receive_notification', {
+    io.to(receiverId.toString()).emit('receive_notification', {
       _id: notification._id,
       sender: senderPayload,
       receiverId: receiverId,
@@ -176,7 +194,7 @@ const sendNotification = async (req, res) => {
     console.error('Error sending notification:', error);
     res.status(500).json({
       message: 'Error sending notification',
-      error: error.message
+      error: process.env.NODE_ENV === 'production' ? undefined : error.message
     });
   }
 };
@@ -272,7 +290,7 @@ const proposeBinome = async (req, res) => {
     res.status(200).json({ message: 'Proposition envoyée', notification });
   } catch (error) {
     console.error('Error proposing binome:', error);
-    res.status(500).json({ message: 'Erreur lors de la proposition', error: error.message });
+    res.status(500).json({ message: 'Erreur lors de la proposition', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   }
 };
 
@@ -326,7 +344,7 @@ const getNotifications = async(req, res) => {
         console.error('Error fetching notifications:', error);
         res.status(500).json({
             message: 'Error fetching notifications',
-            error: error.message
+            error: process.env.NODE_ENV === 'production' ? undefined : error.message
         });
     }
 };
@@ -338,7 +356,7 @@ const getUnreadNotificationsCount = async (req, res) => {
         res.status(200).json({ count });
     } catch (error) {
         console.error('Error counting unread notifications:', error);
-        res.status(500).json({ message: 'Error counting unread notifications', error: error.message });
+        res.status(500).json({ message: 'Error counting unread notifications', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
     }
 };
 
@@ -349,7 +367,7 @@ const markAllNotificationsAsRead = async (req, res) => {
         res.status(200).json({ message: 'Notifications marked as read' });
     } catch (error) {
         console.error('Error marking notifications as read:', error);
-        res.status(500).json({ message: 'Error marking notifications as read', error: error.message });
+        res.status(500).json({ message: 'Error marking notifications as read', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
     }
 };
 
@@ -551,7 +569,7 @@ const acceptNotification = async (req, res) => {
     console.error('Error accepting notification:', error);
     res.status(500).json({
       message: 'Error accepting notification',
-      error: error.message
+      error: process.env.NODE_ENV === 'production' ? undefined : error.message
     });
   }
 };
@@ -618,7 +636,7 @@ const acceptNotification = async (req, res) => {
       console.error('Error refusing notification:', error);
       res.status(500).json({
         message: 'Error refusing notification',
-        error: error.message
+        error: process.env.NODE_ENV === 'production' ? undefined : error.message
       });
     }
   };
@@ -648,7 +666,7 @@ const deleteNotification = async (req, res) => {
     console.error('Error deleting notification:', error);
     res.status(500).json({
       message: 'Error deleting notification',
-      error: error.message
+      error: process.env.NODE_ENV === 'production' ? undefined : error.message
     });
   }
 };

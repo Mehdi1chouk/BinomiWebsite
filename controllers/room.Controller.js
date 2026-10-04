@@ -3,12 +3,31 @@ const UserModel = require("../models/User.model")
 const { API_BASE_URL } = require("../utils/apiBaseUrl");
 const { deleteUploadedFiles } = require("../utils/deleteUploadedFile");
 const { compressImage } = require("../utils/compressImage");
-//const { decodeRoomId } = require("../utils/hashids");
+const { isValidImage } = require("../utils/validateImage");
 const crypto = require('crypto');
-// Secret key for encoding/decoding (store this in environment variables in production)
-const SECRET_KEY = '52937680';
+// Obfuscates MongoDB ObjectIds in room URLs so they aren't trivially
+// sequential/guessable — not a security boundary itself (every route here
+// still separately checks real ownership), so the fallback is fine for repos
+// that haven't set ROOM_ID_SECRET_KEY yet, but each deployment should set its
+// own via env rather than share the one baked into this repo.
+const SECRET_KEY = process.env.ROOM_ID_SECRET_KEY || '52937680';
 const KEY = crypto.createHash('sha256').update(SECRET_KEY).digest().subarray(0, 24);
 const IV_LENGTH = 16;
+
+// user_id, lastOwner, currentOccupants and occupants are deliberately
+// excluded: those are ownership/occupancy state the server itself manages
+// (set explicitly in CreateRoom, mutated only by the dedicated
+// increment/decrement/archive routes) — spreading req.body straight into the
+// model let a request simply include occupants:[...] or
+// currentOccupants:<n> and have it saved verbatim, letting any room owner
+// fake a full/occupied listing or inject arbitrary user ids as "occupants".
+// photos/Equipement are excluded too since both are built separately below
+// from the uploaded files / selectedEquipment, not from a raw body field.
+const ROOM_EDITABLE_FIELDS = [
+    'type', 'etage', 'assensceur', 'garage', 'etat', 'disponibilite',
+    'region', 'ville', 'quartier', 'price', 'cautionnement', 'nombreDeColocation',
+    'description', 'gaz', 'electricite', 'chambres', 'lits', 'sdb'
+];
 
 const encodeRoomId = (roomId) => {
     const iv = crypto.randomBytes(IV_LENGTH);
@@ -48,7 +67,7 @@ const getRoombyUserId = async(req, res) => {
         
         res.send(encodedList);
     } catch (error) {
-        res.status(500).send({ message: 'Error fetching rooms', error: error.message });
+        res.status(500).send({ message: 'Error fetching rooms', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
     }
 };
 
@@ -87,7 +106,7 @@ const getAllRooms = async (req, res) => {
             hasMore: skip + data.length < total
         });
     } catch (err) {
-        res.status(500).send({ message: 'Error retrieving rooms', error: err.message });
+        res.status(500).send({ message: 'Error retrieving rooms', error: process.env.NODE_ENV === 'production' ? undefined : err.message });
     }
 };
 
@@ -139,8 +158,7 @@ const CreateRoom = async (req, res) => {
         }
         
         // Photos validation
-        if (!req.files || !req.files.photos || 
-            (Array.isArray(req.files.photos) && req.files.photos.length === 0)) {
+        if (!req.files || req.files.length === 0) {
             validationErrors.push('Au moins une photo est requise');
         }
         
@@ -187,19 +205,33 @@ const CreateRoom = async (req, res) => {
         }
         
         // Create the room with the basic form data
+        const roomData = {};
+        for (const field of ROOM_EDITABLE_FIELDS) {
+            if (req.body[field] !== undefined) roomData[field] = req.body[field];
+        }
+
         let Room = new RoomModel({
-            ...req.body,
+            ...roomData,
             user_id: req.user._id,
             lastOwner: req.user._id
         });
         
         // Handle photos
-        if (req.files && req.files.photos) {
-            const uploadedPhotos = Array.isArray(req.files.photos) ? req.files.photos : [req.files.photos];
+        if (req.files && req.files.length > 0) {
+            // multer accepts any file regardless of content, and
+            // compressImage's own fallback below silently keeps the RAW file
+            // when sharp can't process it — reject non-images outright
+            // instead of letting them slip through as room photos.
+            for (const photo of req.files) {
+                if (!(await isValidImage(photo.path))) {
+                    deleteUploadedFiles(req.files);
+                    return res.status(400).json({ message: 'Une ou plusieurs photos ne sont pas des images valides.' });
+                }
+            }
 
-            // A compression failure on one photo shouldn't block the whole
-            // listing — fall back to that photo's raw upload.
-            Room.photos = await Promise.all(uploadedPhotos.map(async (photo) => ({
+            // A compression failure on one (valid) photo shouldn't block the
+            // whole listing — fall back to that photo's raw upload.
+            Room.photos = await Promise.all(req.files.map(async (photo) => ({
                 path: (await compressImage(photo.path).catch(() => photo.path)).replace("\\", "/"),
                 name: photo.filename || photo.originalname
             })));
@@ -240,7 +272,7 @@ const CreateRoom = async (req, res) => {
         
         res.status(422).json({
             message: 'Échec de la sauvegarde du logement',
-            error: err.message
+            error: process.env.NODE_ENV === 'production' ? undefined : err.message
         });
     }
 };
@@ -273,19 +305,20 @@ const updateRoom = async (req, res) => {
             return res.status(403).send({ message: 'Not authorized to update this room' });
         }
         
-        // Start with updating text fields
-        const updateData = { ...req.body };
+        // Start with updating text fields — same whitelist as CreateRoom.
+        // user_id/lastOwner/currentOccupants/occupants are never settable
+        // here: this request only proves the caller owns the room, not that
+        // ownership/occupancy state should be rewritable by it.
+        const updateData = {};
+        for (const field of ROOM_EDITABLE_FIELDS) {
+            if (req.body[field] !== undefined) updateData[field] = req.body[field];
+        }
 
         // Handle the etage field specifically
         if (updateData.etage === "null" || updateData.etage === "") {
             updateData.etage = 0;
         } else if (updateData.etage !== undefined) {
             updateData.etage = Number(updateData.etage);
-        }
-
-        // Ensure `user_id` is correctly formatted
-        if (req.body.user_id && typeof req.body.user_id === "object") {
-            updateData.user_id = req.body.user_id._id;
         }
 
         // Handle equipment data
@@ -296,7 +329,6 @@ const updateRoom = async (req, res) => {
                     name: item.name,
                     path: item.icon
                 }));
-                delete updateData.selectedEquipment;
             } catch (parseError) {
                 console.error('Error parsing equipment data:', parseError);
             }
@@ -321,19 +353,22 @@ const updateRoom = async (req, res) => {
             } catch (error) {
                 console.error("Error parsing keepPhotos:", error);
             }
-        } else if (!req.files || !req.files.photos) {
+        } else if (!req.files || req.files.length === 0) {
             updateData.photos = existingRoom.photos;
         }
 
         // Case 2: Add any new photos
-        if (req.files && req.files.photos) {
-            const newPhotos = Array.isArray(req.files.photos)
-                ? req.files.photos
-                : [req.files.photos];
+        if (req.files && req.files.length > 0) {
+            for (const photo of req.files) {
+                if (!(await isValidImage(photo.path))) {
+                    deleteUploadedFiles(req.files);
+                    return res.status(400).json({ message: 'Une ou plusieurs photos ne sont pas des images valides.' });
+                }
+            }
 
-            // A compression failure on one photo shouldn't block the update
-            // — fall back to that photo's raw upload.
-            const newPhotoObjects = await Promise.all(newPhotos.map(async (photo) => ({
+            // A compression failure on one (valid) photo shouldn't block the
+            // update — fall back to that photo's raw upload.
+            const newPhotoObjects = await Promise.all(req.files.map(async (photo) => ({
                 path: (await compressImage(photo.path).catch(() => photo.path)).replace("\\", "/"),
                 name: photo.filename || photo.originalname
             })));
@@ -341,8 +376,6 @@ const updateRoom = async (req, res) => {
             updateData.photos = [...updateData.photos, ...newPhotoObjects];
             console.log("Added new photos:", newPhotoObjects);
         }
-
-        delete updateData.keepPhotos;
 
         // Any existing photo not carried over into the final list was
         // dropped by this update — its file would otherwise sit on disk
@@ -367,7 +400,7 @@ const updateRoom = async (req, res) => {
         console.error('Error updating room:', err);
         res.status(422).send({
             message: 'Failed to update room',
-            error: err.message,
+            error: process.env.NODE_ENV === 'production' ? undefined : err.message,
             details: err.errors ? Object.keys(err.errors).map(key => ({
                 field: key,
                 message: err.errors[key].message
@@ -564,7 +597,7 @@ const getRoomById = async (req, res) => {
         }
         res.status(500).send({
             message: 'Server error',
-            error: err.message
+            error: process.env.NODE_ENV === 'production' ? undefined : err.message
         });
     }
 };
@@ -606,7 +639,7 @@ const getCurrentUserRoom = async (req, res) => {
     } catch (err) {
         res.status(500).send({
             message: 'Server error',
-            error: err.message
+            error: process.env.NODE_ENV === 'production' ? undefined : err.message
         });
     }
 };
@@ -760,7 +793,7 @@ const getBinomeStatus = async (req, res) => {
         });
     } catch (error) {
         console.error('Error getting binome status:', error);
-        res.status(500).json({ message: 'Erreur serveur', error: error.message });
+        res.status(500).json({ message: 'Erreur serveur', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
     }
 };
 

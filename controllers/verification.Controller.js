@@ -9,7 +9,7 @@ const path = require('path');
 // does the just-captured live photo belong to the same person as the
 // anchor (signup) photo.
 exports.verifyFace = async (req, res) => {
-  const livePath = req.files?.live?.path;
+  const livePath = req.file?.path;
 
   try {
     if (!livePath) {
@@ -27,7 +27,9 @@ exports.verifyFace = async (req, res) => {
     form.append('anchor', fs.createReadStream(anchorPath));
     form.append('live', fs.createReadStream(livePath));
 
-    const response = await axios.post('http://127.0.0.1:5000/verify-face', form, {
+    // See auth.Controller.js's register() for why this reads FLASK_API_URL
+    // instead of hardcoding the loopback address.
+    const response = await axios.post(`${process.env.FLASK_API_URL || 'http://127.0.0.1:5000'}/verify-face`, form, {
       headers: form.getHeaders(),
     });
 
@@ -44,7 +46,7 @@ exports.verifyFace = async (req, res) => {
       return res.status(422).json({ message: error.response.data.message || 'Aucun visage détecté' });
     }
     console.error('Face verification error:', error.message);
-    res.status(500).json({ message: 'Erreur lors de la vérification', error: error.message });
+    res.status(500).json({ message: 'Erreur lors de la vérification', error: process.env.NODE_ENV === 'production' ? undefined : error.message });
   } finally {
     if (livePath) {
       fs.unlink(livePath, () => {});
