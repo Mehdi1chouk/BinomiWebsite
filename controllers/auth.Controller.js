@@ -203,9 +203,22 @@ exports.register = async (req, res) => {
     // once Node and Flask run as separate Docker services — FLASK_API_URL
     // (e.g. http://flask-api:5000) is what actually resolves to the Flask
     // container. Falls back to loopback for local dev without Docker.
-    const response = await axios.post(`${process.env.FLASK_API_URL || 'http://127.0.0.1:5000'}/predict`, form, {
-      headers: form.getHeaders(),
-    });
+    let response;
+    try {
+      response = await axios.post(`${process.env.FLASK_API_URL || 'http://127.0.0.1:5000'}/predict`, form, {
+        headers: form.getHeaders(),
+      });
+    } catch (err) {
+      // Flask now rejects 0-face/multi-face photos with a 422 — without this,
+      // axios throwing on that non-2xx fell straight into the outer catch
+      // block below and surfaced as a generic 500 "Registration failed"
+      // instead of the specific, actionable reason.
+      if (err.response?.status === 422) {
+        fs.unlinkSync(photoPath);
+        return res.status(400).send({ message: err.response.data.message || 'Photo refusée.' });
+      }
+      throw err;
+    }
 
     const { prediction, probabilities } = response.data;
 
