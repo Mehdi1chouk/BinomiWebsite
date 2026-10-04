@@ -43,7 +43,7 @@ module.exports = (server) => {
     server.post('/users/filter', verifytoken, requireVerified, UserController.filterUser);
     server.get('/users/:id', verifytoken, UserController.getUserById);
 
-    server.post('/report', verifytoken, reportController.reportUser);
+    server.post('/report', verifytoken, requireVerified, reportController.reportUser);
 
     //photo verification
     server.post('/verify-face', verifytoken, uploadmiddleware, verificationController.verifyFace);
