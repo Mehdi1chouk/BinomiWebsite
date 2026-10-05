@@ -276,6 +276,27 @@ exports.register = async (req, res) => {
 
     await newUser.save();
 
+    // Fire-and-forget: a typo'd signup email (common during testing) or a
+    // transient SMTP hiccup should never fail a registration that already
+    // succeeded — the account is created either way. Logged, not awaited
+    // into the response, and never throws into the outer try/catch.
+    transporter.sendMail({
+      from: `"Binomy" <${process.env.EMAIL_USER}>`,
+      to: newUser.email,
+      subject: 'Bienvenue sur Binomy !',
+      text: `Bienvenue sur Binomy, ${newUser.firstname} ! Votre compte a été créé avec succès. Connectez-vous pour compléter votre profil et commencer à chercher votre binôme : ${process.env.FRONTEND_URL || 'http://localhost:4200'}`,
+      html: buildActionEmailHtml({
+        heading: `Bienvenue, ${newUser.firstname} !`,
+        bodyLines: [
+          'Votre compte Binomy a été créé avec succès.',
+          'Complétez votre profil et passez le test de vérification pour débloquer toutes les fonctionnalités — messages, filtres, détails des logements.',
+        ],
+        buttonLabel: 'Accéder à mon compte',
+        buttonUrl: process.env.FRONTEND_URL || 'http://localhost:4200',
+      }),
+      attachments: [LOGO_ATTACHMENT],
+    }).catch((err) => console.error('Failed to send welcome email:', err.message));
+
     // 10. Generate token and send response
     const token = jwt.sign({ _id: newUser._id, role: newUser.role, tokenVersion: newUser.tokenVersion }, process.env.SECRET, { expiresIn: JWT_EXPIRES_IN });
 

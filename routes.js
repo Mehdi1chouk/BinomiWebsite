@@ -32,6 +32,7 @@ const uploadmiddleware = multer({ storage: usersImagesStorage, limits: { fileSiz
 const uploadroomImages = multer({ storage: roomImagesStorage, limits: { fileSize: 50 * 1024 * 1024, files: 10 } });
 const { verifytoken, requireAdmin, requireVerified } = require('./middlewares/AuthMiddleWare')
 const reportController = require('./controllers/report.Controller');
+const feedbackController = require('./controllers/feedback.Controller');
 const adminController = require('./controllers/admin.Controller');
 const verificationController = require('./controllers/verification.Controller');
 const pushController = require('./controllers/push.Controller');
@@ -110,6 +111,10 @@ module.exports = (server) => {
     server.post('/forgot-password', authFormLimiter, authController.forgotPassword)
     server.post('/reset-password', authFormLimiter, authController.resetPassword)
     server.put('/update-password/:userId', verifytoken, authFormLimiter, authController.updatePassword);
+
+    //public contact form (landing page) — unauthenticated, so rate-limited
+    //the same way as the other public email-sending endpoints above
+    server.post('/feedback', authFormLimiter, feedbackController.sendFeedback);
 
 
     //Room

@@ -15,13 +15,13 @@ const LOGO_ATTACHMENT = {
   cid: LOGO_CID,
 };
 
-// Shared HTML shell for action-link emails (email verification, password
-// reset, ...). Renders the link as a styled button instead of a raw URL
-// pasted into the message body — avoids exposing the token as plain,
-// copy-pasteable text the way a bare link does. Table-based layout since
-// that's what renders consistently across email clients (notably Outlook
-// desktop), not just modern webmail.
-const buildActionEmailHtml = ({ heading, bodyLines, buttonLabel, buttonUrl, footerNote }) => `
+// Shared shell every branded email sits inside — the logo header, the white
+// card, the outer gray gutter. Table-based layout since that's what renders
+// consistently across email clients (notably Outlook desktop), not just
+// modern webmail. `bodyHtml` is trusted content built by the functions
+// below, never raw user input — see escapeHtml in buildFeedbackEmailHtml
+// for the one template that actually embeds user-submitted text.
+const emailShell = (bodyHtml) => `
 <!DOCTYPE html>
 <html>
   <head>
@@ -43,16 +43,7 @@ const buildActionEmailHtml = ({ heading, bodyLines, buttonLabel, buttonUrl, foot
             </tr>
             <tr>
               <td style="padding:32px;">
-                <h1 style="margin:0 0 16px; font-size:20px; color:#3d2c5b;">${heading}</h1>
-                ${bodyLines.map((line) => `<p style="margin:0 0 16px; font-size:15px; line-height:1.5; color:#333333;">${line}</p>`).join('')}
-                <table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0;">
-                  <tr>
-                    <td align="center" style="border-radius:999px; background-color:#ff6b4a;">
-                      <a href="${buttonUrl}" style="display:inline-block; padding:14px 32px; font-size:15px; font-weight:bold; color:#ffffff; text-decoration:none; border-radius:999px;">${buttonLabel}</a>
-                    </td>
-                  </tr>
-                </table>
-                ${footerNote ? `<p style="margin:16px 0 0; font-size:13px; line-height:1.5; color:#8c8699;">${footerNote}</p>` : ''}
+                ${bodyHtml}
               </td>
             </tr>
           </table>
@@ -63,4 +54,41 @@ const buildActionEmailHtml = ({ heading, bodyLines, buttonLabel, buttonUrl, foot
 </html>
 `;
 
-module.exports = { buildActionEmailHtml, LOGO_ATTACHMENT };
+// Renders the link as a styled button instead of a raw URL pasted into the
+// message body — avoids exposing the token as plain, copy-pasteable text
+// the way a bare link does.
+const buildActionEmailHtml = ({ heading, bodyLines, buttonLabel, buttonUrl, footerNote }) => emailShell(`
+  <h1 style="margin:0 0 16px; font-size:20px; color:#3d2c5b;">${heading}</h1>
+  ${bodyLines.map((line) => `<p style="margin:0 0 16px; font-size:15px; line-height:1.5; color:#333333;">${line}</p>`).join('')}
+  <table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0;">
+    <tr>
+      <td align="center" style="border-radius:999px; background-color:#ff6b4a;">
+        <a href="${buttonUrl}" style="display:inline-block; padding:14px 32px; font-size:15px; font-weight:bold; color:#ffffff; text-decoration:none; border-radius:999px;">${buttonLabel}</a>
+      </td>
+    </tr>
+  </table>
+  ${footerNote ? `<p style="margin:16px 0 0; font-size:13px; line-height:1.5; color:#8c8699;">${footerNote}</p>` : ''}
+`);
+
+// Only this template embeds user-submitted text (the landing page's contact
+// form, read by the operator in their own inbox) — escaped the same way
+// SweetAlert2's title/html needed escaping in the frontend, since this is
+// HTML a mail client will render, not plain text.
+const escapeHtml = (value) => String(value)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
+const buildFeedbackEmailHtml = ({ firstname, lastname, email, message }) => emailShell(`
+  <h1 style="margin:0 0 16px; font-size:20px; color:#3d2c5b;">Nouveau message depuis le site</h1>
+  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:16px;">
+    <tr><td style="padding:4px 0; font-size:13px; color:#8c8699; width:90px;">De</td><td style="padding:4px 0; font-size:14px; color:#333333;">${escapeHtml(firstname)} ${escapeHtml(lastname)}</td></tr>
+    <tr><td style="padding:4px 0; font-size:13px; color:#8c8699;">Email</td><td style="padding:4px 0; font-size:14px; color:#333333;">${escapeHtml(email)}</td></tr>
+  </table>
+  <p style="margin:0 0 8px; font-size:13px; color:#8c8699;">Message</p>
+  <p style="margin:0; font-size:15px; line-height:1.6; color:#333333; white-space:pre-line; background-color:#f4f2f7; padding:16px; border-radius:8px;">${escapeHtml(message)}</p>
+`);
+
+module.exports = { buildActionEmailHtml, buildFeedbackEmailHtml, LOGO_ATTACHMENT };
