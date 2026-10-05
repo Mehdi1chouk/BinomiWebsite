@@ -13,7 +13,7 @@ let io;
 const BannedEmailModel = require('../models/BannedEmail.model')
 const { compressImage } = require('../utils/compressImage');
 const { rejectIfNotImage } = require('../utils/validateImage');
-const { buildActionEmailHtml } = require('../utils/emailTemplate');
+const { buildActionEmailHtml, LOGO_ATTACHMENT } = require('../utils/emailTemplate');
 
 // Tokens used to never expire, so a leaked/stolen token stayed valid forever.
 // 7 days bounds a silent, undetected leak — the actual kill-switch for a
@@ -448,6 +448,7 @@ exports.updatePassword = async (req, res) => {
                         buttonUrl: resetUrl,
                         footerNote: 'Ce lien expire dans 20 minutes. Si vous n’êtes pas à l’origine de cette demande, ignorez cet email.',
                     }),
+                    attachments: [LOGO_ATTACHMENT],
                 }
                 await transporter.sendMail(mailContent)
                 await user.save()

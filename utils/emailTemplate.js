@@ -1,14 +1,19 @@
-const fs = require('fs');
 const path = require('path');
 
-// Embedded as a data URI, not a hosted URL: the app has no public domain yet
-// (see environment.ts/​.env's deployment placeholders), and most email
-// clients block remote images by default anyway until the recipient clicks
-// "show images" — inlining means the logo is just always there. Read once at
-// module load, not per email send. SVG isn't used here: email client SVG
-// support is unreliable (notably Outlook desktop), unlike the PNG everything
-// else on this logo already renders fine.
-const LOGO_ICON_BASE64 = fs.readFileSync(path.join(__dirname, 'assets/email-logo-icon.png')).toString('base64');
+// CID embedding, not a base64 data: URI — Gmail (confirmed live, notably on
+// mobile) strips inline data: URI images from HTML emails as a spam/security
+// measure, so the logo rendered as a broken-image icon. cid: references a
+// proper MIME attachment instead, which is the standard, actually-reliable
+// way to put a logo in a transactional email — every major client supports
+// it. Also not a hosted https:// URL: the app has no public domain yet.
+// Whoever calls buildActionEmailHtml must pass LOGO_ATTACHMENT into
+// nodemailer's `attachments` array, or this image won't resolve either.
+const LOGO_CID = 'binomy-logo-icon';
+const LOGO_ATTACHMENT = {
+  filename: 'binomy-logo.png',
+  path: path.join(__dirname, 'assets/email-logo-icon.png'),
+  cid: LOGO_CID,
+};
 
 // Shared HTML shell for action-link emails (email verification, password
 // reset, ...). Renders the link as a styled button instead of a raw URL
@@ -31,7 +36,7 @@ const buildActionEmailHtml = ({ heading, bodyLines, buttonLabel, buttonUrl, foot
             <tr>
               <td style="background-color:#3d2c5b; padding:24px 32px;">
                 <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-                  <td style="padding-right:10px; vertical-align:middle;"><img src="data:image/png;base64,${LOGO_ICON_BASE64}" width="28" height="24.5" alt="" style="display:block;"></td>
+                  <td style="padding-right:10px; vertical-align:middle;"><img src="cid:${LOGO_CID}" width="28" height="24.5" alt="" style="display:block;"></td>
                   <td style="vertical-align:middle;"><span style="font-size:20px; font-weight:bold; color:#ffffff;">binom</span><span style="font-size:20px; font-weight:bold; color:#ff6b4a;">y</span></td>
                 </tr></table>
               </td>
@@ -58,4 +63,4 @@ const buildActionEmailHtml = ({ heading, bodyLines, buttonLabel, buttonUrl, foot
 </html>
 `;
 
-module.exports = { buildActionEmailHtml };
+module.exports = { buildActionEmailHtml, LOGO_ATTACHMENT };
